@@ -1,4 +1,7 @@
  
-# SQLite databases 
-instance/*.db 
-instance/*.db-journal 
+.env
+__pycache__/
+*.pyc
+instance/
+uploads/
+transport.db 

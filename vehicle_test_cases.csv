@@ -1,0 +1,182 @@
+Test Case ID,Test Category,Test Description,Preconditions,Test Steps,Expected Result,Priority,Business Impact
+VEH-001,Vehicle Registration,Add new vehicle to the system,User logged in as Operations/tenant_admin,1. Navigate to Vehicle Management page
+2. Click "Add New Vehicle"
+3. Fill in vehicle details (registration number, type, make, model)
+4. Save vehicle,Vehicle should be created successfully and appear in vehicle list,High,Critical for fleet management
+VEH-002,Vehicle Registration,Add vehicle with duplicate registration number,Vehicle with registration MH01AB1234 already exists,1. Navigate to Vehicle Management page
+2. Click "Add New Vehicle"
+3. Enter same registration number MH01AB1234
+4. Fill other details and save,System should show error message about duplicate registration,Medium,Prevents data integrity issues
+VEH-003,Vehicle Registration,Add vehicle with missing required fields,User logged in,1. Navigate to Vehicle Management page
+2. Click "Add New Vehicle"
+3. Leave registration number empty
+4. Try to save,System should show validation error for required fields,Medium,Ensures data quality
+VEH-004,Vehicle Registration,Add vehicle with future manufacturing year,User logged in,1. Navigate to Vehicle Management page
+2. Click "Add New Vehicle"
+3. Enter year as 2025 (future year)
+4. Fill other details and save,System should show warning or accept with validation,Low,Data validation
+VEH-005,Vehicle Registration,Add vehicle with invalid registration format,User logged in,1. Navigate to Vehicle Management page
+2. Click "Add New Vehicle"
+3. Enter registration as "INVALID123"
+4. Fill other details and save,System should validate registration format,Medium,Compliance with regulations
+VEH-006,Vehicle Update,Edit existing vehicle details,Vehicle MH01AB1234 exists in system,1. Navigate to Vehicle Management page
+2. Find vehicle MH01AB1234
+3. Click Edit button
+4. Update vehicle details (make, model, capacity)
+5. Save changes,Vehicle details should be updated successfully,High,Maintains accurate fleet data
+VEH-007,Vehicle Update,Change vehicle status from Active to Inactive,Vehicle exists with Active status,1. Navigate to Vehicle Management page
+2. Select vehicle
+3. Change status to Inactive
+4. Save changes,Vehicle status should be updated and reflected in list,High,Fleet management control
+VEH-008,Vehicle Update,Update vehicle insurance expiry date,Vehicle exists in system,1. Navigate to Vehicle Management page
+2. Edit vehicle
+3. Update insurance expiry date
+4. Save changes,Insurance expiry should be updated correctly,High,Compliance management
+VEH-009,Vehicle Search,Search vehicle by registration number,Multiple vehicles exist in system,1. Navigate to Vehicle Management page
+2. Enter registration number in search box
+3. Click search,Only matching vehicle should be displayed,High,Quick vehicle lookup
+VEH-010,Vehicle Search,Search vehicle by vehicle type,Truck and Trailer vehicles exist,1. Navigate to Vehicle Management page
+2. Select "Truck" from vehicle type filter
+3. Apply filter,Only Truck type vehicles should be displayed,Medium,Fleet analysis
+VEH-011,Vehicle Search,Search vehicle by make,Tata and Ashok Leyland vehicles exist,1. Navigate to Vehicle Management page
+2. Enter "Tata" in make search
+3. Apply search,Only Tata vehicles should be displayed,Medium,Manufacturer tracking
+VEH-012,Vehicle Search,Search with no results,User logged in,1. Navigate to Vehicle Management page
+2. Enter non-existent registration number
+3. Search,System should show "No vehicles found" message,Low,User experience
+VEH-013,Vehicle Deletion,Delete vehicle with no trips,Vehicle exists with no associated trips,1. Navigate to Vehicle Management page
+2. Select vehicle
+3. Click Delete button
+4. Confirm deletion,Vehicle should be deleted successfully,Medium,Cleanup unused vehicles
+VEH-014,Vehicle Deletion,Attempt to delete vehicle with active trips,Vehicle has active transport trips,1. Navigate to Vehicle Management page
+2. Select vehicle with active trips
+3. Click Delete button,System should show error about active trips,High,Prevents business disruption
+VEH-015,Vehicle Assignment,Assign driver to vehicle,Vehicle and driver exist in system,1. Navigate to Vehicle Management page
+2. Select vehicle
+3. Click Assign Driver
+4. Select driver from dropdown
+5. Save assignment,Driver should be assigned to vehicle,High,Operational planning
+VEH-016,Vehicle Assignment,Change assigned driver,Vehicle already has driver assigned,1. Navigate to Vehicle Management page
+2. Select vehicle
+3. Click Change Driver
+4. Select new driver
+5. Save assignment,New driver should replace previous assignment,High,Driver management
+VEH-017,Vehicle Assignment,Remove driver assignment,Vehicle has driver assigned,1. Navigate to Vehicle Management page
+2. Select vehicle
+3. Click Remove Driver
+4. Confirm removal,Driver assignment should be removed,Medium,Assignment flexibility
+VEH-018,Vehicle Assignment,Assign driver to already assigned vehicle,Vehicle already has driver assigned,1. Navigate to Vehicle Management page
+2. Select vehicle with driver
+3. Try to assign another driver,System should show warning or replace existing,Medium,Prevents conflicts
+VEH-019,Vehicle Documents,Upload vehicle insurance document,Vehicle exists in system,1. Navigate to Vehicle Management page
+2. Select vehicle
+3. Click Documents tab
+4. Upload insurance document
+5. Save,Document should be uploaded and linked to vehicle,High,Compliance documentation
+VEH-020,Vehicle Documents,Upload fitness certificate,Vehicle exists in system,1. Navigate to Vehicle Management page
+2. Select vehicle
+3. Click Documents tab
+4. Upload fitness certificate
+5. Save,Certificate should be uploaded and expiry date updated,High,Regulatory compliance
+VEH-021,Vehicle Documents,View uploaded documents,Vehicle has uploaded documents,1. Navigate to Vehicle Management page
+2. Select vehicle
+3. Click Documents tab,All uploaded documents should be listed with download option,Medium,Document management
+VEH-022,Vehicle Documents,Delete uploaded document,Vehicle has uploaded documents,1. Navigate to Vehicle Management page
+2. Select vehicle
+3. Click Documents tab
+4. Click delete on document
+5. Confirm deletion,Document should be removed from system,Medium,Document lifecycle
+VEH-023,Vehicle Reports,Generate vehicle utilization report,Multiple vehicles with trip data exist,1. Navigate to Reports section
+2. Select Vehicle Utilization Report
+3. Select date range
+4. Generate report,Report should show utilization statistics for all vehicles,High,Business intelligence
+VEH-024,Vehicle Reports,Generate vehicle maintenance report,Vehicles with service history exist,1. Navigate to Reports section
+2. Select Maintenance Report
+3. Select date range
+4. Generate report,Report should show maintenance history and upcoming services,High,Maintenance planning
+VEH-025,Vehicle Reports,Export vehicle list to Excel,Multiple vehicles exist,1. Navigate to Vehicle Management page
+2. Click Export button
+3. Select Excel format
+4. Download file,Excel file should contain all vehicle data,Medium,Data export for analysis
+VEH-026,Vehicle Dashboard,View vehicle dashboard summary,User logged in,1. Navigate to Dashboard
+2. View Vehicle section,Dashboard should show total vehicles, active/inactive count, types,High,Quick overview
+VEH-027,Vehicle Dashboard,View vehicle status indicators,User logged in,1. Navigate to Dashboard
+2. View Vehicle status section,Should show vehicles due for insurance, fitness, maintenance,High,Proactive management
+VEH-028,Vehicle Filters,Filter vehicles by status,Vehicles with different statuses exist,1. Navigate to Vehicle Management page
+2. Apply status filter (Active/Inactive)
+3. Apply filter,Only vehicles with selected status should be shown,Medium,Quick filtering
+VEH-029,Vehicle Filters,Filter vehicles by capacity range,Vehicles with different capacities exist,1. Navigate to Vehicle Management page
+2. Set capacity range filter
+3. Apply filter,Only vehicles within capacity range should be shown,Medium,Load planning
+VEH-030,Vehicle Filters,Filter vehicles by manufacturing year,Vehicles from different years exist,1. Navigate to Vehicle Management page
+2. Set year range filter
+3. Apply filter,Only vehicles within year range should be shown,Low,Fleet age analysis
+VEH-031,Vehicle Capacity,Update vehicle load capacity,Vehicle exists in system,1. Navigate to Vehicle Management page
+2. Edit vehicle
+3. Update load capacity
+4. Save changes,Load capacity should be updated and validated,Medium,Load planning accuracy
+VEH-032,Vehicle Capacity,Set invalid negative capacity,Vehicle exists in system,1. Navigate to Vehicle Management page
+2. Edit vehicle
+3. Enter negative capacity
+4. Try to save,System should show validation error,Low,Data integrity
+VEH-033,Vehicle Types,Add new vehicle type,User logged in as admin,1. Navigate to Vehicle Types section
+2. Click Add Type
+3. Enter new type name
+4. Save,New vehicle type should be created,Medium,System configuration
+VEH-034,Vehicle Types,Edit existing vehicle type,Vehicle types exist,1. Navigate to Vehicle Types section
+2. Select type
+3. Edit type name
+4. Save,Type should be updated successfully,Low,System maintenance
+VEH-035,Vehicle Types,Delete vehicle type in use,Vehicle type assigned to vehicles,1. Navigate to Vehicle Types section
+2. Try to delete type in use,System should show error about vehicles using type,Medium,Prevents data inconsistency
+VEH-036,Vehicle Maintenance,Record maintenance activity,Vehicle exists,1. Navigate to Vehicle Management page
+2. Select vehicle
+3. Click Maintenance tab
+4. Add maintenance record
+5. Save,Maintenance record should be created and linked,High,Maintenance tracking
+VEH-037,Vehicle Maintenance,View maintenance history,Vehicle has maintenance records,1. Navigate to Vehicle Management page
+2. Select vehicle
+3. Click Maintenance tab,All maintenance records should be displayed chronologically,Medium,Maintenance analysis
+VEH-038,Vehicle Maintenance,Set maintenance reminder,Vehicle exists,1. Navigate to Vehicle Management page
+2. Select vehicle
+3. Set next maintenance date
+4. Save,Reminder should be set and visible in dashboard,High,Preventive maintenance
+VEH-039,Vehicle Compliance,Check expiring documents,Vehicles with documents expiring soon,1. Navigate to Compliance section
+2. View expiring documents,System should show vehicles with documents expiring in 30 days,High,Regulatory compliance
+VEH-040,Vehicle Compliance,Generate compliance report,All vehicles have documents,1. Navigate to Compliance section
+2. Generate compliance report,Report should show compliance status of all vehicles,High,Audit readiness
+VEH-041,Vehicle Tracking,View real-time vehicle location,Vehicles equipped with GPS,1. Navigate to Vehicle Tracking page
+2. Select vehicle,Current location should be displayed on map,High,Operational visibility
+VEH-042,Vehicle Tracking,View vehicle trip history,Vehicle has completed trips,1. Navigate to Vehicle Management page
+2. Select vehicle
+3. Click Trip History,Trip history should be displayed with dates and routes,Medium,Performance analysis
+VEH-043,Vehicle Performance,Calculate vehicle efficiency,Vehicle has trip data,1. Navigate to Reports section
+2. Select Vehicle Performance Report
+3. Select vehicle and date range
+4. Generate report,Report should show fuel efficiency, trip metrics,High,Performance optimization
+VEH-044,Vehicle Performance,Compare vehicle performance,Multiple vehicles with trip data,1. Navigate to Reports section
+2. Select Vehicle Comparison Report
+3. Select vehicles to compare
+4. Generate report,Report should show side-by-side performance metrics,Medium,Fleet optimization
+VEH-045,Vehicle Costs,Track vehicle operating costs,Vehicle exists,1. Navigate to Vehicle Management page
+2. Select vehicle
+3. Click Costs tab
+4. Add cost record (fuel, maintenance),Cost should be recorded and linked to vehicle,High,Cost management
+VEH-046,Vehicle Costs,Generate cost analysis report,Vehicles have cost data,1. Navigate to Reports section
+2. Select Cost Analysis Report
+3. Select date range
+4. Generate report,Report should show cost breakdown by vehicle and category,High,Financial analysis
+VEH-047,Vehicle Integration,Sync with external GPS system,GPS system configured,1. Navigate to Integration settings
+2. Configure GPS sync
+3. Test connection,Vehicle locations should sync from GPS system,Medium,Integration testing
+VEH-048,Vehicle Integration,Import vehicle data from Excel,Excel file with vehicle data exists,1. Navigate to Vehicle Management page
+2. Click Import button
+3. Select Excel file
+4. Upload and map fields,Vehicles should be imported successfully,Medium,Bulk data management
+VEH-049,Vehicle Integration,Export vehicle data for backup,Vehicles exist in system,1. Navigate to Vehicle Management page
+2. Click Export button
+3. Select backup format
+4. Export,Complete vehicle data should be exported,Medium,Data backup
+VEH-050,Vehicle Audit,View vehicle change history,Vehicle has been modified,1. Navigate to Vehicle Management page
+2. Select vehicle
+3. Click Audit trail,All changes should be shown with user and timestamp,Medium,Audit compliance

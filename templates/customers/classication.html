@@ -1,0 +1,325 @@
+{% extends 'base.html' %}
+
+{% block title %}Customer Classification Management{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="navbar-top d-flex justify-content-between align-items-center">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-tags"></i> Customer Classification
+        </h4>
+    </div>
+    <div>
+        <a href="{{ url_for('vendors') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Customers
+        </a>
+        {% if has_permission('vendors', 'edit') %}
+        <button type="button" class="btn btn-info" data-bs-toggle="modal" data-bs-target="#categoryModal">
+            <i class="bi bi-plus"></i> Add Category
+        </button>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Classification Summary -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ categories|length }}</h3>
+                <small class="text-white-50">Total Categories</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ vendors|selectattr('customer_type', equalto='vip')|length or 0 }}</h3>
+                <small class="text-white-50">VIP Customers</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-info text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ vendors|selectattr('customer_type', equalto='premium')|length or 0 }}</h3>
+                <small class="text-white-50">Premium Customers</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning text-dark">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ vendors|selectattr('customer_type', equalto='regular')|length or 0 }}</h3>
+                <small class="text-white-50">Regular Customers</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Categories Table -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-list"></i> Customer Categories</h5>
+    </div>
+    <div class="card-body p-0">
+        {% if categories %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th>Category Name</th>
+                        <th>Code</th>
+                        <th>Min Credit Limit</th>
+                        <th>Max Credit Limit</th>
+                        <th>Payment Terms</th>
+                        <th>Service Priority</th>
+                        <th>SLA Hours</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for category in categories %}
+                    <tr>
+                        <td>
+                            <strong>{{ category.category_name }}</strong>
+                            {% if category.description %}
+                            <br>
+                            <small class="text-muted">{{ category.description }}</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="badge bg-secondary">{{ category.category_code }}</span>
+                        </td>
+                        <td>₹{{ "{:,.0f}".format(category.min_credit_limit or 0) }}</td>
+                        <td>₹{{ "{:,.0f}".format(category.max_credit_limit or 0) }}</td>
+                        <td>{{ category.default_payment_terms or 'Net 30' }}</td>
+                        <td>
+                            <span class="badge bg-{% if category.service_priority == 'urgent' %}danger{% elif category.service_priority == 'high' %}warning{% else %}info{% endif %}">
+                                {{ category.service_priority.title() }}
+                            </span>
+                        </td>
+                        <td>{{ category.sla_hours or 48 }} hrs</td>
+                        <td>
+                            {% if category.is_active %}
+                                <span class="badge bg-success">Active</span>
+                            {% else %}
+                                <span class="badge bg-secondary">Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                {% if has_permission('vendors', 'edit') %}
+                                <a href="#" class="btn btn-sm btn-outline-primary" 
+                                   onclick="editCategory({{ category.id }}, '{{ category.category_name }}', '{{ category.category_code }}', {{ category.min_credit_limit }}, {{ category.max_credit_limit }}, '{{ category.default_payment_terms }}', '{{ category.service_priority }}', {{ category.sla_hours }}, {{ category.sort_order }})">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                {% endif %}
+                                {% if has_permission('vendors', 'edit') %}
+                                <form method="POST" action="{{ url_for('delete_customer_category', id=category.id) }}" class="d-inline" 
+                                      onsubmit="return confirm('Delete this category?')">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-tags fs-1 d-block mb-3"></i>
+            <p>No customer categories found.</p>
+            <p>Create categories to segment your customers for better service and risk management.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Add Category Modal -->
+<div class="modal fade" id="categoryModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add Customer Category</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('create_customer_category') }}">
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Category Name *</label>
+                            <input type="text" name="category_name" class="form-control" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Category Code *</label>
+                            <input type="text" name="category_code" class="form-control" required>
+                        </div>
+                        <div class="col-md-12">
+                            <label class="form-label">Description</label>
+                            <textarea name="description" class="form-control" rows="3"></textarea>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Min Credit Limit</label>
+                            <input type="number" name="min_credit_limit" class="form-control" step="0.01" value="0">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Max Credit Limit</label>
+                            <input type="number" name="max_credit_limit" class="form-control" step="0.01" value="0">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Default Payment Terms</label>
+                            <select name="default_payment_terms" class="form-select">
+                                <option value="Net 15">Net 15</option>
+                                <option value="Net 30" selected>Net 30</option>
+                                <option value="Net 45">Net 45</option>
+                                <option value="Net 60">Net 60</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Service Priority</label>
+                            <select name="service_priority" class="form-select">
+                                <option value="low">Low</option>
+                                <option value="medium" selected>Medium</option>
+                                <option value="high">High</option>
+                                <option value="urgent">Urgent</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">SLA Hours</label>
+                            <input type="number" name="sla_hours" class="form-control" value="48" min="1">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Sort Order</label>
+                            <input type="number" name="sort_order" class="form-control" value="0" min="0">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-plus-lg"></i> Add Category
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Category Modal -->
+<div class="modal fade" id="editCategoryModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Edit Customer Category</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" id="editCategoryForm">
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <input type="hidden" name="category_id" id="editCategoryId">
+                        <div class="col-md-6">
+                            <label class="form-label">Category Name *</label>
+                            <input type="text" name="category_name" id="editCategoryName" class="form-control" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Category Code *</label>
+                            <input type="text" name="category_code" id="editCategoryCode" class="form-control" required>
+                        </div>
+                        <div class="col-md-12">
+                            <label class="form-label">Description</label>
+                            <textarea name="description" id="editCategoryDescription" class="form-control" rows="3"></textarea>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Min Credit Limit</label>
+                            <input type="number" name="min_credit_limit" id="editMinCreditLimit" class="form-control" step="0.01">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Max Credit Limit</label>
+                            <input type="number" name="max_credit_limit" id="editMaxCreditLimit" class="form-control" step="0.01">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Default Payment Terms</label>
+                            <select name="default_payment_terms" id="editPaymentTerms" class="form-select">
+                                <option value="Net 15">Net 15</option>
+                                <option value="Net 30">Net 30</option>
+                                <option value="Net 45">Net 45</option>
+                                <option value="Net 60">Net 60</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Service Priority</label>
+                            <select name="service_priority" id="editServicePriority" class="form-select">
+                                <option value="low">Low</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                                <option value="urgent">Urgent</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">SLA Hours</label>
+                            <input type="number" name="sla_hours" id="editSlaHours" class="form-control" min="1">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Sort Order</label>
+                            <input type="number" name="sort_order" id="editSortOrder" class="form-control" min="0">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg"></i> Update Category
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+function editCategory(id, name, code, minCredit, maxCredit, paymentTerms, servicePriority, slaHours, sortOrder) {
+    document.getElementById('editCategoryId').value = id;
+    document.getElementById('editCategoryName').value = name;
+    document.getElementById('editCategoryCode').value = code;
+    document.getElementById('editCategoryDescription').value = document.getElementById('editCategoryDescription').value || '';
+    document.getElementById('editMinCreditLimit').value = minCredit;
+    document.getElementById('editMaxCreditLimit').value = maxCredit;
+    document.getElementById('editPaymentTerms').value = paymentTerms;
+    document.getElementById('editServicePriority').value = servicePriority;
+    document.getElementById('editSlaHours').value = slaHours;
+    document.getElementById('editSortOrder').value = sortOrder;
+    
+    var modal = new bootstrap.Modal(document.getElementById('editCategoryModal'));
+    modal.show();
+}
+
+// Delete category function
+function deleteCategory(categoryId, categoryName) {
+    if (confirm('Are you sure you want to delete the category "' + categoryName + '"? This action cannot be undone.')) {
+        // Create form and submit
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/customers/classification/delete/' + categoryId;
+        
+        const csrfToken = document.querySelector('meta[name="csrf-token"]');
+        if (csrfToken) {
+            const csrfInput = document.createElement('input');
+            csrfInput.type = 'hidden';
+            csrfInput.name = 'csrf_token';
+            csrfInput.value = csrfToken.content;
+            form.appendChild(csrfInput);
+        }
+        
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+</script>
+{% endblock %}

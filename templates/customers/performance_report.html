@@ -1,0 +1,263 @@
+{% extends 'base.html' %}
+
+{% block title %}Customer Performance Report{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="navbar-top d-flex justify-content-between align-items-center">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-bar-chart"></i> Customer Performance Report
+        </h4>
+    </div>
+    <div>
+        <a href="{{ url_for('customer_analytics_dashboard') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Analytics
+        </a>
+        {% if has_permission('vendors', 'edit') %}
+        <button class="btn btn-success" onclick="exportPerformanceReport()">
+            <i class="bi bi-download"></i> Export to Excel
+        </button>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ customer_data|length }}</h3>
+                <small class="text-white-50">Total Customers</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">₹{{ "{:,.0f}".format(customer_data|sum(attribute='analytics.total_revenue') or 0) }}</h3>
+                <small class="text-white-50">Total Revenue</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning text-dark">
+            <div class="card-body text-center">
+                <h3 class="mb-0">₹{{ "{:,.0f}".format(customer_data|sum(attribute='analytics.avg_order_value') or 0) }}</h3>
+                <small class="text-white-50">Avg Order Value</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-info text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ "%.1f"|format(customer_data|sum(attribute='analytics.customer_satisfaction_score') or 0) }}</h3>
+                <small class="text-white-50">Avg Satisfaction</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Performance Table -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-trophy"></i> Customer Performance Rankings</h5>
+    </div>
+    <div class="card-body p-0">
+        {% if customer_data %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th>Rank</th>
+                        <th>Customer</th>
+                        <th>Tier</th>
+                        <th>Type</th>
+                        <th>Revenue</th>
+                        <th>Orders</th>
+                        <th>Avg Order</th>
+                        <th>Satisfaction</th>
+                        <th>Lifetime Value</th>
+                        <th>Growth Rate</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for data in customer_data %}
+                    <tr class="{% if data.rank <= 3 %}table-success{% elif data.rank <= 10 %}table-info{% endif %}">
+                        <td>
+                            {% if data.rank <= 3 %}
+                                <i class="bi bi-trophy-fill text-warning"></i>
+                            {% endif %}
+                            {{ data.rank }}
+                        </td>
+                        <td>
+                            <strong>{{ data.customer.vendor_name }}</strong>
+                            {% if data.customer.customer_segment %}
+                            <br><small class="text-muted">{{ data.customer.customer_segment }}</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if data.customer.customer_tier %}
+                            <span class="badge bg-{% if data.customer.customer_tier == 'platinum' %}success{% elif data.customer.customer_tier == 'gold' %}warning{% elif data.customer.customer_tier == 'silver' %}light{% else %}secondary{% endif %}">
+                                {{ data.customer.customer_tier.title() }}
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if data.customer.customer_type %}
+                            <span class="badge bg-{% if data.customer.customer_type == 'vip' %}warning{% elif data.customer.customer_type == 'premium' %}info{% else %}primary{% endif %}">
+                                {{ data.customer.customer_type.title() }}
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td>₹{{ "{:,.0f}".format(data.analytics.total_revenue or 0) }}</td>
+                        <td>{{ data.analytics.total_bills or 0 }}</td>
+                        <td>₹{{ "{:,.0f}".format(data.analytics.avg_order_value or 0) }}</td>
+                        <td>
+                            {% if data.analytics.customer_satisfaction_score %}
+                                <div class="d-flex align-items-center">
+                                    <div class="me-1">
+                                        {% for i in range(1, 6) %}
+                                            <i class="bi bi-star{% if i <= data.analytics.customer_satisfaction_score %} text-warning{% else %}text-muted{% endif %}"></i>
+                                        {% endfor %}
+                                    </div>
+                                    <small class="text-muted">({{ "%.1f"|format(data.analytics.customer_satisfaction_score) }})</small>
+                                </div>
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>₹{{ "{:,.0f}".format(data.analytics.customer_lifetime_value or 0) }}</td>
+                        <td>
+                            <span class="badge bg-{% if data.analytics.growth_rate > 0 %}success{% elif data.analytics.growth_rate < 0 %}danger{% else %}secondary{% endif %}">
+                                {% if data.analytics.growth_rate %}
+                                    {{ "%.1f"|format(data.analytics.growth_rate) }}%
+                                {% else %}
+                                    0%
+                                {% endif %}
+                            </span>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                {% if has_permission('vendors', 'view') %}
+                                <a href="{{ url_for('customer_analytics_detail', id=data.customer.id) }}" class="btn btn-sm btn-outline-info" title="View Analytics">
+                                    <i class="bi bi-graph-up"></i>
+                                </a>
+                                {% endif %}
+                                {% if has_permission('vendors', 'view') %}
+                                <a href="{{ url_for('customer_communications', vendor_id=data.customer.id) }}" class="btn btn-sm btn-outline-primary" title="Communications">
+                                    <i class="bi bi-chat-dots"></i>
+                                </a>
+                                {% endif %}
+                                {% if has_permission('vendors', 'edit') %}
+                                <a href="{{ url_for('edit_vendor', id=data.customer.id) }}" class="btn btn-sm btn-outline-success" title="Edit Customer">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="11" class="text-center text-muted py-5">
+                            <i class="bi bi-bar-chart fs-1 d-block mb-3"></i>
+                            <p>No customer performance data found.</p>
+                            <p>Customer analytics will appear here once customers have transaction history.</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-bar-chart fs-1 d-block mb-3"></i>
+            <p>No customer performance data found.</p>
+            <p>Add customers and generate analytics to see performance rankings.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Export Modal -->
+<div class="modal fade" id="exportModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Export Performance Report</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Export Format</label>
+                        <select class="form-select" id="exportFormat">
+                            <option value="excel">Excel (.xlsx)</option>
+                            <option value="csv">CSV (.csv)</option>
+                            <option value="pdf">PDF (.pdf)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Date Range</label>
+                        <select class="form-select" id="dateRange">
+                            <option value="all">All Time</option>
+                            <option value="current_month">Current Month</option>
+                            <option value="last_quarter">Last Quarter</option>
+                            <option value="last_year">Last Year</option>
+                        </select>
+                    </div>
+                    <div class="col-md-12">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="includeCharts">
+                            <label class="form-check-label" for="includeCharts">
+                                Include Charts and Graphs
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="confirmExport()">
+                    <i class="bi bi-download"></i> Export
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function exportPerformanceReport() {
+    var modal = new bootstrap.Modal(document.getElementById('exportModal'));
+    modal.show();
+}
+
+function confirmExport() {
+    var format = document.getElementById('exportFormat').value;
+    var dateRange = document.getElementById('dateRange').value;
+    var includeCharts = document.getElementById('includeCharts').checked;
+    
+    // Close modal
+    bootstrap.Modal.getInstance(document.getElementById('exportModal')).hide();
+    
+    // Trigger export
+    window.location.href = '/customers/analytics/export?format=' + format + '&range=' + dateRange + '&charts=' + includeCharts;
+}
+
+// Add search/filter functionality
+function filterPerformanceData() {
+    const input = document.getElementById('searchInput').value.toLowerCase();
+    const rows = document.querySelectorAll('tbody tr');
+    
+    rows.forEach(row => {
+        const customerName = row.cells[1].textContent.toLowerCase();
+        if (customerName.includes(input)) {
+            row.style.display = '';
+        } else {
+            row.style.display = 'none';
+        }
+    });
+}
+</script>
+{% endblock %}

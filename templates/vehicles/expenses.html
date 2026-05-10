@@ -1,0 +1,284 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ vehicle.registration_number }} - Expenses{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="navbar-top d-flex justify-content-between align-items-center">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-wallet2"></i> 
+            <span class="text-primary">{{ vehicle.registration_number }}</span>
+            <small class="text-muted fs-6">- Expense History</small>
+        </h4>
+        <small class="text-muted">
+            {% if vehicle.make %}{{ vehicle.make }}{% endif %}
+            {% if vehicle.model %}{{ vehicle.model }}{% endif %}
+        </small>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{{ url_for('vehicle_dashboard', id=vehicle.id) }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </a>
+        {% if has_permission('expenses', 'create') %}
+        <a href="{{ url_for('expenses') }}" class="btn btn-success">
+            <i class="bi bi-plus-lg"></i> Add Expense
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card h-100 border-primary">
+            <div class="card-body text-center">
+                <h6 class="text-muted mb-2">Total Expenses</h6>
+                <h3 class="text-primary mb-0">₹{{ "{:,.0f}".format(total_expenses) }}</h3>
+                <small class="text-muted">{{ 'Filtered' if filters.date_from or filters.date_to else 'All time' }}</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100 border-warning">
+            <div class="card-body text-center">
+                <h6 class="text-muted mb-2">Last 30 Days</h6>
+                <h3 class="text-warning mb-0">₹{{ "{:,.0f}".format(recent_30_days) }}</h3>
+                <small class="text-muted">Recent spending</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100 border-info">
+            <div class="card-body text-center">
+                <h6 class="text-muted mb-2">Monthly Average</h6>
+                <h3 class="text-info mb-0">₹{{ "{:,.0f}".format(avg_per_month) }}</h3>
+                <small class="text-muted">Per month avg</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100 border-danger">
+            <div class="card-body text-center">
+                <h6 class="text-muted mb-2">Highest Category</h6>
+                <h5 class="text-danger mb-0">{{ highest_category or 'N/A' }}</h5>
+                {% if highest_category %}
+                <small class="text-muted">₹{{ "{:,.0f}".format(category_totals[highest_category]) }}</small>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Category Breakdown -->
+{% if category_totals %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-pie-chart"></i> Expense Breakdown by Category</h5>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            {% for category, amount in category_totals.items()|sort(reverse=true, attribute='1') %}
+            <div class="col-md-3 mb-3">
+                {% set bg_class = {
+                    'Fuel': 'bg-warning bg-opacity-25',
+                    'Maintenance': 'bg-info bg-opacity-25',
+                    'Repairs': 'bg-danger bg-opacity-25',
+                    'Tires': 'bg-secondary bg-opacity-25',
+                    'Insurance': 'bg-success bg-opacity-25',
+                    'Tax': 'bg-primary bg-opacity-25',
+                    'Accessories': 'bg-dark bg-opacity-25'
+                }.get(category, 'bg-light') %}
+                <div class="d-flex justify-content-between align-items-center p-2 rounded {{ bg_class }}">
+                    <div>
+                        <span class="badge 
+                            {% if category == 'Fuel' %}bg-warning text-dark
+                            {% elif category == 'Maintenance' %}bg-info text-dark
+                            {% elif category == 'Repairs' %}bg-danger
+                            {% elif category == 'Tires' %}bg-secondary
+                            {% elif category == 'Insurance' %}bg-success
+                            {% elif category == 'Tax' %}bg-primary
+                            {% elif category == 'Accessories' %}bg-dark
+                            {% else %}bg-light text-dark{% endif %}">
+                            {{ category }}
+                        </span>
+                    </div>
+                    <div class="text-end">
+                        <strong>₹{{ "{:,.0f}".format(amount) }}</strong>
+                        <br>
+                        <small class="text-muted">{{ "%.1f"|format((amount / total_expenses * 100) if total_expenses > 0 else 0) }}%</small>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Filter Panel -->
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-funnel"></i> Filters</h5>
+        <a href="{{ url_for('vehicle_expenses', id=vehicle.id) }}" class="btn btn-sm btn-outline-secondary">Clear All</a>
+    </div>
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('vehicle_expenses', id=vehicle.id) }}" class="row g-3">
+            <div class="col-md-2">
+                <label class="form-label">Date From</label>
+                <input type="date" name="date_from" class="form-control" value="{{ filters.date_from }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Date To</label>
+                <input type="date" name="date_to" class="form-control" value="{{ filters.date_to }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Category</label>
+                <select name="category" class="form-select" multiple size="1">
+                    <option value="" {% if not filters.category %}selected{% endif %}>All Categories</option>
+                    {% for cat in categories %}
+                    <option value="{{ cat }}" {% if cat in filters.category %}selected{% endif %}>{{ cat }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Vendor/Garage</label>
+                <input type="text" name="vendor" class="form-control" placeholder="Search vendor..." value="{{ filters.vendor }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Min Amount (₹)</label>
+                <input type="number" name="min_amount" class="form-control" placeholder="0" value="{{ filters.min_amount }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Max Amount (₹)</label>
+                <input type="number" name="max_amount" class="form-control" placeholder="∞" value="{{ filters.max_amount }}">
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-search"></i> Apply Filters
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Expenses Table -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-list"></i> Expense List</h5>
+        <div>
+            <button onclick="exportToExcel()" class="btn btn-sm btn-success">
+                <i class="bi bi-file-excel"></i> Export to Excel
+            </button>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        {% if expenses %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="expensesTable">
+                <thead class="table-light">
+                    <tr>
+                        <th>Date</th>
+                        <th>Category</th>
+                        <th>Description</th>
+                        <th>Vendor/Garage</th>
+                        <th>Payment</th>
+                        <th>Bill #</th>
+                        <th class="text-end">Amount (₹)</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for expense in expenses %}
+                    <tr>
+                        <td>{{ expense.expense_date.strftime('%d-%b-%Y') if expense.expense_date else '-' }}</td>
+                        <td>
+                            <span class="badge 
+                                {% if expense.category == 'Fuel' %}bg-warning text-dark
+                                {% elif expense.category == 'Maintenance' %}bg-info text-dark
+                                {% elif expense.category == 'Repairs' %}bg-danger
+                                {% elif expense.category == 'Tires' %}bg-secondary
+                                {% elif expense.category == 'Insurance' %}bg-success
+                                {% elif expense.category == 'Tax' %}bg-primary
+                                {% elif expense.category == 'Accessories' %}bg-dark
+                                {% else %}bg-light text-dark{% endif %}">
+                                {{ expense.category or 'Other' }}
+                            </span>
+                        </td>
+                        <td>
+                            {{ expense.description[:50] if expense.description else '-' }}
+                            {% if expense.description and expense.description|length > 50 %}...{% endif %}
+                        </td>
+                        <td>{{ expense.vendor_name or '-' }}</td>
+                        <td>{{ expense.payment_method or 'Cash' }}</td>
+                        <td><small class="font-monospace">{{ expense.bill_number or '-' }}</small></td>
+                        <td class="text-end">
+                            <strong>₹{{ "{:,.0f}".format(expense.amount|float) }}</strong>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                {% if expense.receipt_path %}
+                                <a href="/{{ expense.receipt_path }}" target="_blank" class="btn btn-outline-info" title="View Receipt">
+                                    <i class="bi bi-file-earmark"></i>
+                                </a>
+                                {% endif %}
+                                {% if has_permission('expenses', 'edit') %}
+                                <a href="{{ url_for('edit_expense', id=expense.id) }}" class="btn btn-outline-primary" title="Edit Expense">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                {% endif %}
+                                {% if has_permission('expenses', 'delete') %}
+                                <form action="{{ url_for('delete_expense', id=expense.id) }}" method="POST" class="d-inline" onsubmit="return confirm('Delete this expense?')">
+                                    <button type="submit" class="btn btn-outline-danger" title="Delete">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="table-light">
+                    <tr>
+                        <td colspan="6" class="text-end"><strong>Total:</strong></td>
+                        <td class="text-end"><strong>₹{{ "{:,.0f}".format(total_expenses) }}</strong></td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-inbox fs-1 d-block mb-3"></i>
+            <h5>No expenses found</h5>
+            <p>No expenses match the selected filters.</p>
+            {% if has_permission('expenses', 'create') %}
+            <a href="{{ url_for('create_expense') }}" class="btn btn-success">
+                <i class="bi bi-plus-lg"></i> Add First Expense
+            </a>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+function exportToExcel() {
+    const table = document.getElementById('expensesTable');
+    let html = table.outerHTML;
+    
+    const blob = new Blob(['\ufeff', html], {
+        type: 'application/vnd.ms-excel'
+    });
+    
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = '{{ vehicle.registration_number }}_Expenses_{{ filters.date_from or "all" }}_to_{{ filters.date_to or "all" }}.xls';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+</script>
+{% endblock %}

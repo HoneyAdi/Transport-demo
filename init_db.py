@@ -2,7 +2,7 @@
 Initialize sample data for Transport Management System
 Run: python init_db.py
 """
-from app import app, db
+from models import app, db
 from models import (
     DeliveryType,
     Location,

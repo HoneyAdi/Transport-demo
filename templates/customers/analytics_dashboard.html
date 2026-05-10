@@ -1,0 +1,277 @@
+{% extends 'base.html' %}
+
+{% block title %}Customer Analytics Dashboard{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="navbar-top d-flex justify-content-between align-items-center">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-graph-up"></i> Customer Analytics Dashboard
+        </h4>
+    </div>
+    <div>
+        <a href="{{ url_for('vendors') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Customers
+        </a>
+        {% if has_permission('vendors', 'view') %}
+        <a href="{{ url_for('customer_performance_report') }}" class="btn btn-info">
+            <i class="bi bi-bar-chart"></i> Performance Report
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- KPI Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ total_customers }}</h3>
+                <small class="text-white-50">Total Customers</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">₹{{ "{:,.0f}".format(total_revenue) }}</h3>
+                <small class="text-white-50">Total Revenue</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning text-dark">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ high_value_customers }}</h3>
+                <small class="text-white-50">High-Value Customers</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-info text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ "%.1f"|format((high_value_customers / total_customers * 100) if total_customers > 0 else 0) }}%</h3>
+                <small class="text-white-50">High-Value Percentage</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Customer Segmentation -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-pie-chart"></i> Customer Segmentation</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="customerSegmentChart" width="400" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-bar-chart"></i> Revenue by Tier</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="revenueByTierChart" width="400" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Top Customers Table -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-trophy"></i> Top Performing Customers</h5>
+    </div>
+    <div class="card-body p-0">
+        {% if customers %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th>Rank</th>
+                        <th>Customer</th>
+                        <th>Tier</th>
+                        <th>Type</th>
+                        <th>Revenue</th>
+                        <th>Outstanding</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for customer in customers[:10] %}
+                    <tr>
+                        <td>{{ loop.index + 1 }}</td>
+                        <td>
+                            <strong>{{ customer.vendor_name }}</strong>
+                            {% if customer.customer_segment %}
+                            <br><small class="text-muted">{{ customer.customer_segment }}</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if customer.customer_tier %}
+                            <span class="badge bg-{% if customer.customer_tier == 'platinum' %}success{% elif customer.customer_tier == 'gold' %}warning{% elif customer.customer_tier == 'silver' %}light{% else %}secondary{% endif %}">
+                                {{ customer.customer_tier.title() }}
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if customer.customer_type %}
+                            <span class="badge bg-{% if customer.customer_type == 'vip' %}warning{% elif customer.customer_type == 'premium' %}info{% else %}primary{% endif %}">
+                                {{ customer.customer_type.title() }}
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td>₹{{ "{:,.0f}".format(customer.credit_info.current_outstanding or 0) if customer.credit_info else 0 }}</td>
+                        <td>₹{{ "{:,.0f}".format(customer.credit_info.outstanding_balance or 0) if customer.credit_info else 0 }}</td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                {% if has_permission('vendors', 'view') %}
+                                <a href="{{ url_for('customer_analytics_detail', id=customer.id) }}" class="btn btn-sm btn-outline-info" title="View Analytics">
+                                    <i class="bi bi-graph-up"></i>
+                                </a>
+                                {% endif %}
+                                {% if has_permission('vendors', 'view') %}
+                                <a href="{{ url_for('customer_communications', vendor_id=customer.id) }}" class="btn btn-sm btn-outline-primary" title="Communications">
+                                    <i class="bi bi-chat-dots"></i>
+                                </a>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="text-center text-muted py-5">
+                            <i class="bi bi-people fs-1 d-block mb-3"></i>
+                            <p>No customers found.</p>
+                            <p>Add customers to start tracking their performance and analytics.</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-people fs-1 d-block mb-3"></i>
+            <p>No customers found.</p>
+            <p>Start by adding customers to track their performance and analytics.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="row mt-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-lightning"></i> Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <a href="{{ url_for('customer_classification') }}" class="btn btn-outline-primary w-100">
+                            <i class="bi bi-tags"></i> Manage Classifications
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{{ url_for('customer_aging_report') }}" class="btn btn-outline-warning w-100">
+                            <i class="bi bi-clock-history"></i> Aging Report
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <button class="btn btn-outline-success w-100" onclick="exportAnalytics()">
+                            <i class="bi bi-download"></i> Export Analytics
+                        </button>
+                    </div>
+                    <div class="col-md-3">
+                        <button class="btn btn-outline-info w-100" onclick="refreshAnalytics()">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh Data
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Customer Segmentation Chart
+const segmentCtx = document.getElementById('customerSegmentChart').getContext('2d');
+new Chart(segmentCtx, {
+    type: 'pie',
+    data: {
+        labels: ['Regular', 'Premium', 'VIP', 'One-time'],
+        datasets: [{
+            data: [
+                {{ customers|selectattr('customer_type', equalto='regular')|length or 0 }},
+                {{ customers|selectattr('customer_type', equalto='premium')|length or 0 }},
+                {{ customers|selectattr('customer_type', equalto='vip')|length or 0 }},
+                {{ customers|selectattr('customer_type', equalto='one_time')|length or 0 }}
+            ],
+            backgroundColor: [
+                '#007bff',
+                '#17a2b8',
+                '#ffc107',
+                '#6c757d'
+            ]
+        }]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: {
+                position: 'bottom'
+            }
+        }
+    }
+});
+
+// Revenue by Tier Chart
+const tierCtx = document.getElementById('revenueByTierChart').getContext('2d');
+new Chart(tierCtx, {
+    type: 'bar',
+    data: {
+        labels: ['Bronze', 'Silver', 'Gold', 'Platinum'],
+        datasets: [{
+            label: 'Revenue',
+            data: [
+                {{ customers|selectattr('customer_tier', equalto='bronze')|sum(attribute='credit_info.current_outstanding') or 0 }},
+                {{ customers|selectattr('customer_tier', equalto='silver')|sum(attribute='credit_info.current_outstanding') or 0 }},
+                {{ customers|selectattr('customer_tier', equalto='gold')|sum(attribute='credit_info.current_outstanding') or 0 }},
+                {{ customers|selectattr('customer_tier', equalto='platinum')|sum(attribute='credit_info.current_outstanding') or 0 }}
+            ],
+            backgroundColor: '#6c757d'
+        }]
+    },
+    options: {
+        responsive: true,
+        scales: {
+            y: {
+                beginAtZero: true,
+                ticks: {
+                    callback: function(value) {
+                        return '₹' + value.toLocaleString();
+                    }
+                }
+            }
+        }
+    }
+});
+
+function exportAnalytics() {
+    // Export analytics data functionality
+    window.location.href = '/customers/analytics/export';
+}
+
+function refreshAnalytics() {
+    // Refresh analytics data
+    window.location.reload();
+}
+</script>
+{% endblock %}

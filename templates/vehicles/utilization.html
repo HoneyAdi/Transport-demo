@@ -1,0 +1,232 @@
+{% extends 'base.html' %}
+
+{% block title %}Utilization Metrics - {{ vehicle.registration_number }}{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="navbar-top d-flex justify-content-between align-items-center">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-graph-up"></i> Utilization Metrics
+            <small class="text-muted fs-6">- {{ vehicle.registration_number }}</small>
+        </h4>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{{ url_for('vehicle_dashboard', id=vehicle.id) }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </a>
+        <a href="{{ url_for('fleet_utilization_report') }}" class="btn btn-outline-info">
+            <i class="bi bi-truck"></i> Fleet Report
+        </a>
+    </div>
+</div>
+
+<!-- Period Selector -->
+<div class="card mb-3">
+    <div class="card-body">
+        <form method="GET" class="d-flex align-items-center gap-3">
+            <label class="fw-bold mb-0">Time Period:</label>
+            <select name="period" class="form-select w-auto" onchange="this.form.submit()">
+                <option value="1m" {% if period == '1m' %}selected{% endif %}>Last Month</option>
+                <option value="3m" {% if period == '3m' %}selected{% endif %}>Last 3 Months</option>
+                <option value="6m" {% if period == '6m' %}selected{% endif %}>Last 6 Months</option>
+                <option value="1y" {% if period == '1y' %}selected{% endif %}>Last Year</option>
+            </select>
+            <span class="text-muted">|</span>
+            <span class="text-muted">{{ period_label }}</span>
+        </form>
+    </div>
+</div>
+
+<!-- Utilization Hero Card -->
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card bg-primary text-white h-100">
+            <div class="card-body text-center">
+                <h1 class="display-4 mb-0">{{ "%.1f".format(utilization.utilization_pct) }}%</h1>
+                <p class="mb-0">Utilization Rate</p>
+                <small>Fleet Avg: {{ "%.1f".format(fleet_avg) }}%</small>
+                <div class="progress mt-3" style="height: 8px;">
+                    <div class="progress-bar bg-{% if utilization.utilization_pct >= 70 %}success{% elif utilization.utilization_pct >= 50 %}warning{% else %}danger{% endif %}" 
+                         role="progressbar" style="width: {{ utilization.utilization_pct }}%"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-8">
+        <div class="row h-100">
+            <div class="col-md-3">
+                <div class="card bg-success text-white h-100">
+                    <div class="card-body text-center">
+                        <h3 class="mb-0">{{ utilization.active_days }}</h3>
+                        <small>Active Days</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-secondary text-white h-100">
+                    <div class="card-body text-center">
+                        <h3 class="mb-0">{{ utilization.idle_days }}</h3>
+                        <small>Idle Days</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-info text-white h-100">
+                    <div class="card-body text-center">
+                        <h3 class="mb-0">{{ utilization.total_trips }}</h3>
+                        <small>Total Trips</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-warning text-dark h-100">
+                    <div class="card-body text-center">
+                        <h3 class="mb-0">{{ "%.1f".format(utilization.avg_trips_per_active_day) }}</h3>
+                        <small>Avg Trips/Day</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Revenue Metrics -->
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body text-center">
+                <h4 class="text-success mb-0">₹{{ "{:,.0f}".format(utilization.total_revenue) }}</h4>
+                <small class="text-muted">Total Revenue</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body text-center">
+                <h4 class="text-primary mb-0">₹{{ "{:.0f}".format(utilization.revenue_per_active_day) }}</h4>
+                <small class="text-muted">Revenue/Active Day</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body text-center">
+                <h4 class="text-info mb-0">₹{{ "{:.0f}".format(utilization.revenue_per_day) }}</h4>
+                <small class="text-muted">Revenue/Day (All Days)</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Alerts -->
+{% if alerts %}
+<div class="alert alert-warning mb-4">
+    <h6><i class="bi bi-exclamation-triangle"></i> Utilization Alerts</h6>
+    <ul class="mb-0">
+        {% for alert in alerts %}
+        <li>{{ alert.message }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<!-- Monthly Trend Chart -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-bar-chart"></i> Monthly Utilization Trend</h5>
+    </div>
+    <div class="card-body">
+        <canvas id="utilizationChart" height="100"></canvas>
+    </div>
+</div>
+
+<!-- Fleet Comparison -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-speedometer2"></i> Fleet Comparison</h5>
+    </div>
+    <div class="card-body">
+        <div class="row align-items-center">
+            <div class="col-md-6">
+                <p>This Vehicle: <strong class="{% if utilization.utilization_pct >= fleet_avg %}text-success{% else %}text-warning{% endif %}">{{ "%.1f".format(utilization.utilization_pct) }}%</strong></p>
+                <p>Fleet Average: <strong>{{ "%.1f".format(fleet_avg) }}%</strong></p>
+                <p>
+                    {% if utilization.utilization_pct >= fleet_avg %}
+                    <span class="badge bg-success">Above Fleet Average (+{{ "%.1f".format(utilization.utilization_pct - fleet_avg) }}%)</span>
+                    {% else %}
+                    <span class="badge bg-warning">Below Fleet Average ({{ "%.1f".format(utilization.utilization_pct - fleet_avg) }}%)</span>
+                    {% endif %}
+                </p>
+            </div>
+            <div class="col-md-6">
+                <canvas id="comparisonChart" height="150"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+// Monthly Utilization Chart
+const monthlyData = {{ monthly_data|tojson }};
+const ctx1 = document.getElementById('utilizationChart').getContext('2d');
+new Chart(ctx1, {
+    type: 'bar',
+    data: {
+        labels: monthlyData.map(d => d.month),
+        datasets: [
+            {
+                label: 'Active Days',
+                data: monthlyData.map(d => d.active_days),
+                backgroundColor: 'rgba(40, 167, 69, 0.8)',
+                borderColor: 'rgba(40, 167, 69, 1)',
+                borderWidth: 1
+            },
+            {
+                label: 'Idle Days',
+                data: monthlyData.map(d => d.idle_days),
+                backgroundColor: 'rgba(108, 117, 125, 0.8)',
+                borderColor: 'rgba(108, 117, 125, 1)',
+                borderWidth: 1
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        scales: {
+            y: {
+                beginAtZero: true,
+                stacked: false
+            }
+        }
+    }
+});
+
+// Comparison Chart
+const ctx2 = document.getElementById('comparisonChart').getContext('2d');
+new Chart(ctx2, {
+    type: 'doughnut',
+    data: {
+        labels: ['This Vehicle', 'Fleet Average'],
+        datasets: [{
+            data: [{{ utilization.utilization_pct }}, {{ fleet_avg }}],
+            backgroundColor: [
+                '{{ "#28a745" if utilization.utilization_pct >= fleet_avg else "#ffc107" }}',
+                '#6c757d'
+            ],
+            borderWidth: 0
+        }]
+    },
+    options: {
+        responsive: true,
+        cutout: '60%',
+        plugins: {
+            legend: {
+                position: 'bottom'
+            }
+        }
+    }
+});
+</script>
+{% endblock %}

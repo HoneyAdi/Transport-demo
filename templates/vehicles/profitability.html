@@ -1,0 +1,352 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ vehicle.registration_number }} - Profitability Analysis{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="navbar-top d-flex justify-content-between align-items-center">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-graph-up-arrow"></i> 
+            <span class="text-primary">{{ vehicle.registration_number }}</span>
+            <small class="text-muted fs-6">- Profitability Analysis</small>
+        </h4>
+        <small class="text-muted">
+            {% if vehicle.make %}{{ vehicle.make }}{% endif %}
+            {% if vehicle.model %}{{ vehicle.model }}{% endif %}
+        </small>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{{ url_for('vehicle_dashboard', id=vehicle.id) }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </a>
+    </div>
+</div>
+
+<!-- Period Selector -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('vehicle_profitability', id=vehicle.id) }}" class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label">Analysis Period</label>
+                <select name="period" class="form-select" onchange="this.form.submit()">
+                    <option value="lifetime" {% if period == 'lifetime' %}selected{% endif %}>Lifetime (All Time)</option>
+                    <option value="1y" {% if period == '1y' %}selected{% endif %}>Last 12 Months</option>
+                    <option value="6m" {% if period == '6m' %}selected{% endif %}>Last 6 Months</option>
+                    <option value="3m" {% if period == '3m' %}selected{% endif %}>Last 3 Months</option>
+                    <option value="custom" {% if period == 'custom' %}selected{% endif %}>Custom Range</option>
+                </select>
+            </div>
+            {% if period == 'custom' %}
+            <div class="col-md-3">
+                <label class="form-label">From Date</label>
+                <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">To Date</label>
+                <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+            </div>
+            <div class="col-md-3">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-search"></i> Apply
+                </button>
+            </div>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
+<!-- Profit/Loss Hero Card -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card bg-{{ profit_color }} bg-opacity-10 border-{{ profit_color }}">
+            <div class="card-body text-center py-5">
+                <h5 class="text-muted mb-3">Net Profit / Loss</h5>
+                <h1 class="display-4 fw-bold text-{{ profit_color }} mb-3">
+                    {% if net_profit >= 0 %}+{% endif %}₹{{ "{:,.0f}".format(net_profit|abs) }}
+                </h1>
+                <div class="d-flex justify-content-center gap-4">
+                    <div>
+                        <span class="badge bg-success fs-6 px-3 py-2">
+                            <i class="bi bi-arrow-up-circle"></i> {{ "%.1f"|format(profit_margin|abs) }}% Margin
+                        </span>
+                    </div>
+                    <div>
+                        <span class="badge bg-{{ profit_color }} fs-6 px-3 py-2">
+                            {% if profit_status == 'excellent' %}🌟 Excellent{% endif %}
+                            {% if profit_status == 'good' %}✅ Good{% endif %}
+                            {% if profit_status == 'break_even' %}⚠️ Break Even{% endif %}
+                            {% if profit_status == 'loss' %}❌ Loss Making{% endif %}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card h-100 border-success">
+            <div class="card-body text-center">
+                <h6 class="text-muted mb-2"><i class="bi bi-cash-stack"></i> Total Revenue</h6>
+                <h3 class="text-success mb-0">₹{{ "{:,.0f}".format(total_revenue|float) }}</h3>
+                <small class="text-muted">{{ trip_count }} trips</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card h-100 border-warning">
+            <div class="card-body text-center">
+                <h6 class="text-muted mb-2"><i class="bi bi-wallet2"></i> Total Expenses</h6>
+                <h3 class="text-warning mb-0">₹{{ "{:,.0f}".format(total_expenses|float) }}</h3>
+                <small class="text-muted">All categories</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card h-100 border-info">
+            <div class="card-body text-center">
+                <h6 class="text-muted mb-2"><i class="bi bi-calculator"></i> Profit Margin</h6>
+                <h3 class="text-info mb-0">{{ "%.1f"|format(profit_margin) }}%</h3>
+                <small class="text-muted">Net / Revenue × 100</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts & Breakdown -->
+<div class="row mb-4">
+    <!-- Monthly Trend Chart -->
+    <div class="col-lg-8">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-graph-up"></i> Monthly Trend (Last 12 Months)</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="profitabilityChart" height="300"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Expense Breakdown -->
+    <div class="col-lg-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-pie-chart"></i> Expense Breakdown</h5>
+            </div>
+            <div class="card-body">
+                {% if category_totals %}
+                <canvas id="expenseChart" height="250"></canvas>
+                <div class="mt-3">
+                    {% for category, amount in category_totals.items()|sort(reverse=true, attribute='1') %}
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="badge 
+                            {% if category == 'Fuel' %}bg-warning text-dark
+                            {% elif category == 'Maintenance' %}bg-info text-dark
+                            {% elif category == 'Repairs' %}bg-danger
+                            {% elif category == 'Tires' %}bg-secondary
+                            {% elif category == 'Insurance' %}bg-success
+                            {% elif category == 'Tax' %}bg-primary
+                            {% elif category == 'Accessories' %}bg-dark
+                            {% else %}bg-light text-dark{% endif %}">
+                            {{ category }}
+                        </span>
+                        <div class="text-end">
+                            <strong>₹{{ "{:,.0f}".format(amount) }}</strong>
+                            <small class="text-muted d-block">{{ "%.1f"|format((amount / total_expenses * 100) if total_expenses > 0 else 0) }}%</small>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-center text-muted py-4">
+                    <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+                    No expenses recorded
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Monthly P&L Table -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-table"></i> Monthly P&L Statement (Last 12 Months)</h5>
+        <button onclick="exportTableToExcel()" class="btn btn-sm btn-success">
+            <i class="bi bi-file-excel"></i> Export
+        </button>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="pnlTable">
+                <thead class="table-light">
+                    <tr>
+                        <th>Month</th>
+                        <th class="text-end">Revenue (₹)</th>
+                        <th class="text-end">Expenses (₹)</th>
+                        <th class="text-end">Net Profit (₹)</th>
+                        <th class="text-end">Margin (%)</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for month in monthly_data %}
+                    <tr>
+                        <td><strong>{{ month.month }}</strong></td>
+                        <td class="text-end text-success">₹{{ "{:,.0f}".format(month.revenue) }}</td>
+                        <td class="text-end text-warning">₹{{ "{:,.0f}".format(month.expenses) }}</td>
+                        <td class="text-end {% if month.profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                            {% if month.profit >= 0 %}+{% endif %}₹{{ "{:,.0f}".format(month.profit|abs) }}
+                        </td>
+                        <td class="text-end">
+                            {% set margin = (month.profit / month.revenue * 100) if month.revenue > 0 else 0 %}
+                            {{ "%.1f"|format(margin) }}%
+                        </td>
+                        <td>
+                            {% set margin = (month.profit / month.revenue * 100) if month.revenue > 0 else 0 %}
+                            {% if margin >= 20 %}
+                                <span class="badge bg-success">Excellent</span>
+                            {% elif margin >= 10 %}
+                                <span class="badge bg-info">Good</span>
+                            {% elif margin >= 0 %}
+                                <span class="badge bg-warning text-dark">Break Even</span>
+                            {% else %}
+                                <span class="badge bg-danger">Loss</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="table-light">
+                    <tr class="fw-bold">
+                        <td>TOTAL / AVERAGE</td>
+                        <td class="text-end">₹{{ "{:,.0f}".format(total_revenue|float) }}</td>
+                        <td class="text-end">₹{{ "{:,.0f}".format(total_expenses|float) }}</td>
+                        <td class="text-end {% if net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                            {% if net_profit >= 0 %}+{% endif %}₹{{ "{:,.0f}".format(net_profit|abs) }}
+                        </td>
+                        <td class="text-end">{{ "%.1f"|format(profit_margin) }}%</td>
+                        <td><span class="badge bg-{{ profit_color }}">{{ profit_status.replace('_', ' ').title() }}</span></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+// Monthly Trend Chart
+const ctx = document.getElementById('profitabilityChart').getContext('2d');
+const monthlyData = {{ monthly_data | tojson }};
+
+new Chart(ctx, {
+    type: 'line',
+    data: {
+        labels: monthlyData.map(m => m.month),
+        datasets: [
+            {
+                label: 'Revenue',
+                data: monthlyData.map(m => m.revenue),
+                borderColor: '#198754',
+                backgroundColor: '#19875420',
+                fill: true,
+                tension: 0.4
+            },
+            {
+                label: 'Expenses',
+                data: monthlyData.map(m => m.expenses),
+                borderColor: '#ffc107',
+                backgroundColor: '#ffc10720',
+                fill: true,
+                tension: 0.4
+            },
+            {
+                label: 'Net Profit',
+                data: monthlyData.map(m => m.profit),
+                borderColor: '#0dcaf0',
+                backgroundColor: '#0dcaf020',
+                fill: true,
+                tension: 0.4
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                position: 'top',
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                ticks: {
+                    callback: function(value) {
+                        return '₹' + value.toLocaleString();
+                    }
+                }
+            }
+        }
+    }
+});
+
+// Expense Breakdown Pie Chart
+{% if category_totals %}
+const expenseCtx = document.getElementById('expenseChart').getContext('2d');
+const categoryData = {{ category_totals | tojson }};
+
+new Chart(expenseCtx, {
+    type: 'doughnut',
+    data: {
+        labels: Object.keys(categoryData),
+        datasets: [{
+            data: Object.values(categoryData),
+            backgroundColor: [
+                '#ffc107', // Fuel - warning
+                '#0dcaf0', // Maintenance - info
+                '#dc3545', // Repairs - danger
+                '#6c757d', // Tires - secondary
+                '#198754', // Insurance - success
+                '#0d6efd', // Tax - primary
+                '#212529', // Accessories - dark
+                '#f8f9fa'  // Other - light
+            ]
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                display: false
+            }
+        }
+    }
+});
+{% endif %}
+
+// Export to Excel
+function exportTableToExcel() {
+    const table = document.getElementById('pnlTable');
+    let html = table.outerHTML;
+    
+    const blob = new Blob(['\ufeff', html], {
+        type: 'application/vnd.ms-excel'
+    });
+    
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = '{{ vehicle.registration_number }}_Profitability_{{ period }}.xls';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+</script>
+{% endblock %}

@@ -65,6 +65,51 @@
                 </div>
             </div>
 
+            <!-- Customer Classification -->
+            <h6 class="text-primary mb-3"><i class="bi bi-tags"></i> Customer Classification</h6>
+            <div class="row g-3 mb-4">
+                <div class="col-md-3">
+                    <label class="form-label">Customer Type</label>
+                    <select class="form-select" name="customer_type">
+                        <option value="regular" {{ 'selected' if edit and vendor.customer_type == 'regular' else '' }}>Regular</option>
+                        <option value="premium" {{ 'selected' if edit and vendor.customer_type == 'premium' else '' }}>Premium</option>
+                        <option value="vip" {{ 'selected' if edit and vendor.customer_type == 'vip' else '' }}>VIP</option>
+                        <option value="one_time" {{ 'selected' if edit and vendor.customer_type == 'one_time' else '' }}>One-time</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Customer Tier</label>
+                    <select class="form-select" name="customer_tier">
+                        <option value="bronze" {{ 'selected' if edit and vendor.customer_tier == 'bronze' else '' }}>Bronze</option>
+                        <option value="silver" {{ 'selected' if edit and vendor.customer_tier == 'silver' else '' }}>Silver</option>
+                        <option value="gold" {{ 'selected' if edit and vendor.customer_tier == 'gold' else '' }}>Gold</option>
+                        <option value="platinum" {{ 'selected' if edit and vendor.customer_tier == 'platinum' else '' }}>Platinum</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Customer Segment</label>
+                    <input type="text" class="form-control" name="customer_segment" 
+                           value="{{ vendor.customer_segment if edit else '' }}" 
+                           placeholder="e.g., Manufacturing, Logistics, Retail">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Lifecycle Status</label>
+                    <select class="form-select" name="customer_lifecycle_status">
+                        <option value="active" {{ 'selected' if edit and vendor.customer_lifecycle_status == 'active' else '' }}>Active</option>
+                        <option value="inactive" {{ 'selected' if edit and vendor.customer_lifecycle_status == 'inactive' else '' }}>Inactive</option>
+                        <option value="blacklisted" {{ 'selected' if edit and vendor.customer_lifecycle_status == 'blacklisted' else '' }}>Blacklisted</option>
+                        <option value="dormant" {{ 'selected' if edit and vendor.customer_lifecycle_status == 'dormant' else '' }}>Dormant</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row g-3 mb-4">
+                <div class="col-md-12">
+                    <label class="form-label">Classification Notes</label>
+                    <textarea class="form-control" name="classification_notes" rows="3" 
+                              placeholder="Add notes about customer classification...">{{ vendor.classification_notes if edit else '' }}</textarea>
+                </div>
+            </div>
+
             <!-- Contact Information -->
             <h6 class="text-primary mb-3"><i class="bi bi-telephone"></i> Contact Information</h6>
             <div class="row g-3 mb-4">

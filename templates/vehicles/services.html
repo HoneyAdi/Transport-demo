@@ -1,0 +1,308 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ vehicle.registration_number }} - Service History{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="navbar-top d-flex justify-content-between align-items-center">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-wrench"></i> 
+            <span class="text-primary">{{ vehicle.registration_number }}</span>
+            <small class="text-muted fs-6">- Service & Maintenance History</small>
+        </h4>
+        <small class="text-muted">
+            {% if vehicle.make %}{{ vehicle.make }}{% endif %}
+            {% if vehicle.model %}{{ vehicle.model }}{% endif %}
+        </small>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{{ url_for('vehicle_dashboard', id=vehicle.id) }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </a>
+        {% if not g.read_only_mode %}
+        <a href="{{ url_for('create_vehicle_service', id=vehicle.id) }}" class="btn btn-primary">
+            <i class="bi bi-plus-lg"></i> Add Service Record
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Next Service Due Alert -->
+{% if next_service_due %}
+<div class="alert alert-{% if next_service_due.is_overdue %}danger{% elif next_service_due.is_soon %}warning{% else %}info{% endif %} d-flex align-items-center mb-4">
+    <i class="bi bi-{% if next_service_due.is_overdue %}exclamation-triangle-fill{% elif next_service_due.is_soon %}alarm{% else %}info-circle{% endif %} fs-4 me-3"></i>
+    <div>
+        <strong>Next Service Due:</strong>
+        {% if next_service_due.is_overdue %}
+            <span class="text-danger fw-bold">OVERDUE by {{ next_service_due.days_until|abs }} days!</span>
+        {% elif next_service_due.is_soon %}
+            Due in {{ next_service_due.days_until }} days
+        {% else %}
+            Due on {{ next_service_due.date.strftime('%d %b %Y') }}
+        {% endif %}
+        {% if next_service_due.km %}
+            or at {{ "{:,}".format(next_service_due.km) }} km
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card h-100 border-primary">
+            <div class="card-body text-center">
+                <h6 class="text-muted mb-2"><i class="bi bi-wrench"></i> Total Services</h6>
+                <h3 class="text-primary mb-0">{{ total_services }}</h3>
+                <small class="text-muted">{{ services_this_year }} this year</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100 border-warning">
+            <div class="card-body text-center">
+                <h6 class="text-muted mb-2"><i class="bi bi-cash-stack"></i> Total Cost</h6>
+                <h3 class="text-warning mb-0">₹{{ "{:,.0f}".format(total_cost) }}</h3>
+                <small class="text-muted">₹{{ "{:,.0f}".format(cost_this_year) }} this year</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100 border-info">
+            <div class="card-body text-center">
+                <h6 class="text-muted mb-2"><i class="bi bi-calculator"></i> Avg Cost/Service</h6>
+                <h3 class="text-info mb-0">₹{{ "{:,.0f}".format(avg_cost) }}</h3>
+                <small class="text-muted">Per service</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100 border-success">
+            <div class="card-body text-center">
+                <h6 class="text-muted mb-2"><i class="bi bi-calendar-check"></i> Last Service</h6>
+                {% if last_service %}
+                <h3 class="text-success mb-0">{{ last_service.service_date.strftime('%d %b') }}</h3>
+                <small class="text-muted">{{ (date.today() - last_service.service_date).days }} days ago</small>
+                {% else %}
+                <h3 class="text-muted mb-0">-</h3>
+                <small class="text-muted">No records</small>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-funnel"></i> Filters</h5>
+    </div>
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('vehicle_services', id=vehicle.id) }}" class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label">From Date</label>
+                <input type="date" name="date_from" class="form-control" value="{{ filters.date_from }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">To Date</label>
+                <input type="date" name="date_to" class="form-control" value="{{ filters.date_to }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Service Type</label>
+                <select name="service_type" class="form-select" multiple size="1">
+                    <option value="">All Types</option>
+                    {% for stype in service_types %}
+                    <option value="{{ stype }}" {% if stype in filters.service_type %}selected{% endif %}>{{ stype }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Garage/Service Center</label>
+                <input type="text" name="garage" class="form-control" value="{{ filters.garage }}" placeholder="Search garage...">
+            </div>
+            <div class="col-12">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-search"></i> Apply Filters
+                </button>
+                <a href="{{ url_for('vehicle_services', id=vehicle.id) }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-x-circle"></i> Clear
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Service History Table -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-list"></i> Service History</h5>
+        <button onclick="exportTableToExcel()" class="btn btn-sm btn-success">
+            <i class="bi bi-file-excel"></i> Export
+        </button>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="servicesTable">
+                <thead class="table-light">
+                    <tr>
+                        <th>Date</th>
+                        <th>Service Type</th>
+                        <th>Garage</th>
+                        <th>Odometer</th>
+                        <th>Parts</th>
+                        <th>Total Cost</th>
+                        <th>Next Service</th>
+                        <th>Invoice</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for service in services %}
+                    <tr>
+                        <td>
+                            <strong>{{ service.service_date.strftime('%d %b %Y') }}</strong>
+                            <br>
+                            <small class="text-muted">{{ (date.today() - service.service_date).days }} days ago</small>
+                        </td>
+                        <td>
+                            <span class="badge 
+                                {% if service.service_type == 'Oil Change' %}bg-warning text-dark
+                                {% elif service.service_type == 'Filter Replacement' %}bg-secondary
+                                {% elif service.service_type == 'Tire Service' %}bg-dark
+                                {% elif service.service_type == 'Brake Service' %}bg-danger
+                                {% elif service.service_type == 'Battery Service' %}bg-success
+                                {% elif service.service_type == 'AC Service' %}bg-info
+                                {% elif service.service_type == 'General Service' %}bg-primary
+                                {% elif service.service_type == 'Repair' %}bg-danger
+                                {% elif service.service_type == 'Inspection' %}bg-light text-dark
+                                {% else %}bg-secondary{% endif %}">
+                                {{ service.service_type }}
+                            </span>
+                            {% if service.service_description %}
+                            <br>
+                            <small class="text-muted">{{ service.service_description[:50] }}{% if service.service_description|length > 50 %}...{% endif %}</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if service.garage_name %}
+                            <strong>{{ service.garage_name }}</strong>
+                            {% if service.garage_contact %}
+                            <br><small class="text-muted">{{ service.garage_contact }}</small>
+                            {% endif %}
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if service.odometer_reading %}
+                            {{ "{:,}".format(service.odometer_reading) }} km
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if service.parts_replaced %}
+                                {% set parts = service.parts_replaced | from_json %}
+                                <span class="badge bg-info">{{ parts|length }} part(s)</span>
+                                <br>
+                                <small class="text-muted">
+                                {% for part in parts[:2] %}
+                                    {{ part.part }}{% if not loop.last %}, {% endif %}
+                                {% endfor %}
+                                {% if parts|length > 2 %} +{{ parts|length - 2 }} more{% endif %}
+                                </small>
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            <strong>₹{{ "{:,.0f}".format(service.total_cost|float) }}</strong>
+                            {% if service.labor_cost or service.parts_cost %}
+                            <br>
+                            <small class="text-muted">
+                                {% if service.labor_cost %}L: ₹{{ "{:,.0f}".format(service.labor_cost|float) }}{% endif %}
+                                {% if service.parts_cost %}P: ₹{{ "{:,.0f}".format(service.parts_cost|float) }}{% endif %}
+                            </small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if service.next_service_date or service.next_service_km %}
+                                {% if service.next_service_date %}
+                                    {% set days_until = (service.next_service_date - date.today()).days %}
+                                    {% if days_until < 0 %}
+                                        <span class="text-danger"><strong>Overdue!</strong></span>
+                                    {% elif days_until <= 7 %}
+                                        <span class="text-warning">{{ service.next_service_date.strftime('%d %b') }}</span>
+                                    {% else %}
+                                        <span class="text-success">{{ service.next_service_date.strftime('%d %b') }}</span>
+                                    {% endif %}
+                                {% endif %}
+                                {% if service.next_service_km %}
+                                    <br><small class="text-muted">@ {{ "{:,}".format(service.next_service_km) }} km</small>
+                                {% endif %}
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if service.invoice_path %}
+                            <a href="{{ url_for('static', filename=service.invoice_path) }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-file-earmark"></i> View
+                            </a>
+                            {% elif service.invoice_number %}
+                            <small class="text-muted">{{ service.invoice_number }}</small>
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <a href="{{ url_for('edit_vehicle_service', vehicle_id=vehicle.id, service_id=service.id) }}" class="btn btn-outline-primary" title="Edit">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                <form method="POST" action="{{ url_for('delete_vehicle_service', vehicle_id=vehicle.id, service_id=service.id) }}" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this service record?');">
+                                    <button type="submit" class="btn btn-outline-danger" title="Delete">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="9" class="text-center py-4 text-muted">
+                            <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+                            No service records found.
+                            <br>
+                            <a href="{{ url_for('create_vehicle_service', id=vehicle.id) }}" class="btn btn-primary mt-2">
+                                <i class="bi bi-plus-lg"></i> Add First Service Record
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function exportTableToExcel() {
+    const table = document.getElementById('servicesTable');
+    let html = table.outerHTML;
+    
+    const blob = new Blob(['\ufeff', html], {
+        type: 'application/vnd.ms-excel'
+    });
+    
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = '{{ vehicle.registration_number }}_Service_History.xls';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+</script>
+{% endblock %}

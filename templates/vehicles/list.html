@@ -72,7 +72,9 @@
                 <tr>
                     <td>{{ loop.index }}</td>
                     <td>
-                        <strong>{{ veh.registration_number }}</strong>
+                        <a href="{{ url_for('vehicle_dashboard', id=veh.id) }}" class="text-decoration-none">
+                            <strong>{{ veh.registration_number }}</strong>
+                        </a>
                         {% if veh.owner_name %}
                         <br><small class="text-muted">{{ veh.owner_name }}</small>
                         {% endif %}
@@ -100,6 +102,9 @@
                         {% endif %}
                     </td>
                     <td>
+                        <a href="{{ url_for('vehicle_dashboard', id=veh.id) }}" class="btn btn-sm btn-outline-info" title="View Dashboard">
+                            <i class="bi bi-eye"></i>
+                        </a>
                         {% if has_permission('vehicles', 'edit') %}
                         <a href="{{ url_for('edit_vehicle', id=veh.id) }}" class="btn btn-sm btn-outline-primary" title="Edit">
                             <i class="bi bi-pencil"></i>

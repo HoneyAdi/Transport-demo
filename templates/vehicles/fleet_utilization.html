@@ -1,0 +1,159 @@
+{% extends 'base.html' %}
+
+{% block title %}Fleet Utilization Report{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="navbar-top d-flex justify-content-between align-items-center">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-truck"></i> Fleet Utilization Report
+        </h4>
+    </div>
+    <div>
+        <a href="{{ url_for('vehicles') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Vehicles
+        </a>
+    </div>
+</div>
+
+<!-- Summary Card -->
+<div class="card mb-4">
+    <div class="card-body d-flex justify-content-between align-items-center">
+        <div>
+            <h5 class="mb-1">Fleet Average Utilization</h5>
+            <p class="text-muted mb-0">{{ start_date.strftime('%d %b %Y') }} - {{ end_date.strftime('%d %b %Y') }}</p>
+        </div>
+        <div class="text-end">
+            <h2 class="mb-0 {% if fleet_avg >= 70 %}text-success{% elif fleet_avg >= 50 %}text-warning{% else %}text-danger{% endif %}">
+                {{ "%.1f".format(fleet_avg) }}%
+            </h2>
+        </div>
+    </div>
+</div>
+
+<!-- Period Filter -->
+<div class="card mb-3">
+    <div class="card-body">
+        <form method="GET" class="d-flex align-items-center gap-3">
+            <label class="fw-bold mb-0">Period:</label>
+            <select name="period" class="form-select w-auto" onchange="this.form.submit()">
+                <option value="1m" {% if period == '1m' %}selected{% endif %}>Last Month</option>
+                <option value="3m" {% if period == '3m' %}selected{% endif %}>Last 3 Months</option>
+                <option value="6m" {% if period == '6m' %}selected{% endif %}>Last 6 Months</option>
+                <option value="1y" {% if period == '1y' %}selected{% endif %}>Last Year</option>
+            </select>
+        </form>
+    </div>
+</div>
+
+<!-- Fleet Utilization Table -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-list"></i> Vehicle Utilization Ranking</h5>
+        <button onclick="exportReport()" class="btn btn-sm btn-success">
+            <i class="bi bi-file-excel"></i> Export
+        </button>
+    </div>
+    <div class="card-body p-0">
+        {% if fleet_data %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="utilizationTable">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Rank</th>
+                        <th>Vehicle</th>
+                        <th>Utilization %</th>
+                        <th>Active Days</th>
+                        <th>Idle Days</th>
+                        <th>Total Trips</th>
+                        <th>Revenue</th>
+                        <th>Revenue/Day</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for data in fleet_data %}
+                    <tr class="{% if data.utilization.utilization_pct < 50 %}table-warning{% endif %}">
+                        <td>{{ loop.index }}</td>
+                        <td>
+                            <a href="{{ url_for('vehicle_utilization', id=data.vehicle.id) }}" class="fw-bold">
+                                {{ data.vehicle.registration_number }}
+                            </a>
+                            <br>
+                            <small class="text-muted">{{ data.vehicle.model or '' }}</small>
+                        </td>
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <div class="progress flex-grow-1 me-2" style="height: 20px; width: 100px;">
+                                    <div class="progress-bar bg-{% if data.utilization.utilization_pct >= 70 %}success{% elif data.utilization.utilization_pct >= 50 %}warning{% else %}danger{% endif %}" 
+                                         role="progressbar" style="width: {{ data.utilization.utilization_pct }}%">
+                                    </div>
+                                </div>
+                                <span class="fw-bold">{{ "%.1f".format(data.utilization.utilization_pct) }}%</span>
+                            </div>
+                        </td>
+                        <td>{{ data.utilization.active_days }}</td>
+                        <td>{{ data.utilization.idle_days }}</td>
+                        <td>{{ data.utilization.total_trips }}</td>
+                        <td>₹{{ "{:,.0f}".format(data.utilization.total_revenue) }}</td>
+                        <td>₹{{ "{:.0f}".format(data.utilization.revenue_per_day) }}</td>
+                        <td>
+                            {% if data.utilization.utilization_pct >= 70 %}
+                                <span class="badge bg-success">Good</span>
+                            {% elif data.utilization.utilization_pct >= 50 %}
+                                <span class="badge bg-warning">Fair</span>
+                            {% else %}
+                                <span class="badge bg-danger">Underutilized</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-truck fs-1 d-block mb-3"></i>
+            <p>No utilization data available.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+function exportReport() {
+    const table = document.getElementById('utilizationTable');
+    if (!table) {
+        alert('No data to export');
+        return;
+    }
+    
+    let csv = [];
+    const rows = table.querySelectorAll('tr');
+    
+    rows.forEach(row => {
+        let cols = row.querySelectorAll('td, th');
+        let rowData = [];
+        cols.forEach((col, index) => {
+            if (index < 9) {
+                rowData.push('"' + col.innerText.replace(/"/g, '""') + '"');
+            }
+        });
+        csv.push(rowData.join(','));
+    });
+    
+    const csvContent = '\uFEFF' + csv.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'Fleet_Utilization_Report.csv');
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+</script>
+{% endblock %}

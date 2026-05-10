@@ -1,0 +1,219 @@
+{% extends 'base.html' %}
+
+{% block title %}Customer Aging Report{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="navbar-top d-flex justify-content-between align-items-center">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-calendar-week"></i> Customer Aging Report
+        </h4>
+    </div>
+    <div>
+        <a href="{{ url_for('vendors') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Customers
+        </a>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ total_customers }}</h3>
+                <small>Total Customers</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">
+                    ₹{{ "{:,.0f}".format(aging_data | sum(attribute='aging.current') | default(0)) }}
+                </h3>
+                <small>Current (0-30 days)</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning text-dark">
+            <div class="card-body text-center">
+                <h3 class="mb-0">
+                    ₹{{ "{:,.0f}".format(aging_data | sum(attribute='aging.days_31_60') | default(0)) }}
+                </h3>
+                <small>31-60 days</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-danger text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">
+                    ₹{{ "{:,.0f}".format(aging_data | sum(attribute='aging.days_61_90') + aging_data | sum(attribute='aging.days_90_plus') | default(0)) }}
+                </h3>
+                <small>61+ days (Overdue)</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card mb-3">
+    <div class="card-body">
+        <form method="GET" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">Search Customer</label>
+                <input type="text" name="search" class="form-control" 
+                       value="{{ request.args.get('search', '') }}" placeholder="Enter customer name...">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Credit Status</label>
+                <select name="status" class="form-select">
+                    <option value="">All Status</option>
+                    <option value="active" {% if request.args.get('status') == 'active' %}selected{% endif %}>Active</option>
+                    <option value="hold" {% if request.args.get('status') == 'hold' %}selected{% endif %}>On Hold</option>
+                    <option value="suspended" {% if request.args.get('status') == 'suspended' %}selected{% endif %}>Suspended</option>
+                </select>
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-search"></i> Filter
+                </button>
+                <button onclick="exportAgingReport()" class="btn btn-success ms-2">
+                    <i class="bi bi-file-excel"></i> Export
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Aging Report Table -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-table"></i> Customer Aging Details</h5>
+    </div>
+    <div class="card-body p-0">
+        {% if aging_data %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="agingTable">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Customer</th>
+                        <th>Credit Limit</th>
+                        <th>Current</th>
+                        <th>Available</th>
+                        <th>0-30 days</th>
+                        <th>31-60 days</th>
+                        <th>61-90 days</th>
+                        <th>90+ days</th>
+                        <th>Total</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for data in aging_data %}
+                    <tr class="{% if data.aging.days_90_plus > 0 %}table-danger{% elif data.aging.days_61_90 > 0 %}table-warning{% endif %}">
+                        <td>
+                            <div>
+                                <strong>{{ data.customer.vendor_name }}</strong>
+                                {% if data.customer.contact_person %}
+                                <br>
+                                <small class="text-muted">{{ data.customer.contact_person }}</small>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td>₹{{ "{:,.0f}".format(data.credit_info.credit_limit or 0) }}</td>
+                        <td class="{% if data.aging.current > (data.credit_info.credit_limit or 0) * 0.8 %}text-danger{% endif %}">
+                            ₹{{ "{:,.0f}".format(data.aging.current) }}
+                        </td>
+                        <td>₹{{ "{:,.0f}".format(data.credit_info.available_credit or 0) }}</td>
+                        <td>₹{{ "{:,.0f}".format(data.aging.current) }}</td>
+                        <td>₹{{ "{:,.0f}".format(data.aging.days_31_60) }}</td>
+                        <td>₹{{ "{:,.0f}".format(data.aging.days_61_90) }}</td>
+                        <td>₹{{ "{:,.0f}".format(data.aging.days_90_plus) }}</td>
+                        <td class="fw-bold">₹{{ "{:,.0f}".format(data.aging.total) }}</td>
+                        <td>
+                            {% if data.credit_info %}
+                            <span class="badge bg-{% if data.credit_info.is_credit_hold %}danger{% elif data.credit_info.credit_status == 'suspended' %}secondary{% else %}success{% endif %}">
+                                {% if data.credit_info.is_credit_hold %}HOLD{% elif data.credit_info.credit_status == 'suspended' %}SUSPENDED{% else %}ACTIVE{% endif %}
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{{ url_for('customer_credit_management', id=data.customer.id) }}" 
+                               class="btn btn-sm btn-outline-primary" title="Manage Credit">
+                                <i class="bi bi-credit-card"></i>
+                            </a>
+                            <a href="{{ url_for('edit_vendor', id=data.customer.id) }}" 
+                               class="btn btn-sm btn-outline-info" title="Edit Customer">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-calendar-week fs-1 d-block mb-3"></i>
+            <p>No aging data found.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+function exportAgingReport() {
+    const table = document.getElementById('agingTable');
+    if (!table) {
+        alert('No data to export');
+        return;
+    }
+    
+    let csv = [];
+    const rows = table.querySelectorAll('tr');
+    
+    // Extract headers
+    const headers = [];
+    const headerCells = rows[0].querySelectorAll('th');
+    headerCells.forEach((cell, index) => {
+        if (index < 10) { // Skip Actions column
+            headers.push('"' + cell.innerText.replace(/"/g, '""') + '"');
+        }
+    });
+    csv.push(headers.join(','));
+    
+    // Extract data rows
+    for (let i = 1; i < rows.length; i++) {
+        const cells = rows[i].querySelectorAll('td');
+        const rowData = [];
+        
+        cells.forEach((cell, index) => {
+            if (index < 10) { // Skip Actions column
+                let text = cell.innerText.replace(/₹/g, '').replace(/,/g, '');
+                rowData.push('"' + text + '"');
+            }
+        });
+        
+        csv.push(rowData.join(','));
+    }
+    
+    // Create and download CSV
+    const csvContent = '\uFEFF' + csv.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'Customer_Aging_Report.csv');
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+</script>
+{% endblock %}

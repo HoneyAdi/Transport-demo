@@ -1,0 +1,240 @@
+{% extends 'base.html' %}
+
+{% block title %}Fuel Log - {{ vehicle.registration_number }}{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="navbar-top d-flex justify-content-between align-items-center">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-fuel-pump"></i> Fuel Log
+            <small class="text-muted fs-6">- {{ vehicle.registration_number }}</small>
+        </h4>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{{ url_for('vehicle_dashboard', id=vehicle.id) }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </a>
+        <a href="{{ url_for('create_vehicle_fuel_log', id=vehicle.id) }}" class="btn btn-primary">
+            <i class="bi bi-plus-lg"></i> Add Fuel Entry
+        </a>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ "%.1f".format(total_liters) }}</h3>
+                <small>Total Liters (Lifetime)</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ "%.1f".format(avg_efficiency) }}</h3>
+                <small>Avg Efficiency (km/L)</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-info text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">₹{{ "{:.2f}".format(avg_cost_per_km) }}</h3>
+                <small>Avg Cost/km</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning text-dark">
+            <div class="card-body text-center">
+                <h3 class="mb-0">₹{{ "{:.0f}".format(month_cost) }}</h3>
+                <small>This Month Cost</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card mb-3">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-funnel"></i> Filters</h5>
+    </div>
+    <div class="card-body">
+        <form method="GET" class="row g-3">
+            <div class="col-md-2">
+                <label class="form-label">From Date</label>
+                <input type="date" name="from_date" class="form-control" value="{{ filters.from_date }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">To Date</label>
+                <input type="date" name="to_date" class="form-control" value="{{ filters.to_date }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Fuel Type</label>
+                <select name="fuel_type" class="form-select">
+                    <option value="">All Types</option>
+                    {% for ft in fuel_types %}
+                    <option value="{{ ft }}" {% if filters.fuel_type == ft %}selected{% endif %}>{{ ft }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Fuel Station</label>
+                <input type="text" name="fuel_station" class="form-control" value="{{ filters.fuel_station }}" placeholder="Search station...">
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary me-2">
+                    <i class="bi bi-search"></i> Apply
+                </button>
+                <a href="{{ url_for('vehicle_fuel_log', id=vehicle.id) }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-x-lg"></i> Clear
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Fuel Log Table -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-list"></i> Fuel Entries</h5>
+        <button onclick="exportFuelLog()" class="btn btn-sm btn-success">
+            <i class="bi bi-file-excel"></i> Export to Excel
+        </button>
+    </div>
+    <div class="card-body p-0">
+        {% if fuel_logs %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="fuelTable">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Date</th>
+                        <th>Odometer</th>
+                        <th>Quantity (L)</th>
+                        <th>Price/L (₹)</th>
+                        <th>Total Cost</th>
+                        <th>Efficiency (km/L)</th>
+                        <th>Cost/km</th>
+                        <th>Fuel Station</th>
+                        <th>Driver</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in fuel_logs %}
+                    <tr>
+                        <td>{{ log.fueling_date.strftime('%d %b %Y') }}</td>
+                        <td>{{ "{:,}".format(log.odometer_reading) }} km</td>
+                        <td>{{ "%.2f".format(log.fuel_liters) }} L</td>
+                        <td>₹{{ "%.2f".format(log.fuel_price_per_liter or 0) }}</td>
+                        <td>₹{{ "%.2f".format(log.total_cost or 0) }}</td>
+                        <td>
+                            {% if log.efficiency_km_per_liter %}
+                                {% set eff = log.efficiency_km_per_liter|float %}
+                                <span class="badge bg-{% if eff >= 5 %}success{% elif eff >= 3 %}warning{% else %}danger{% endif %}">
+                                    {{ "%.1f".format(eff) }} km/L
+                                </span>
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if log.cost_per_km %}
+                                ₹{{ "%.2f".format(log.cost_per_km|float) }}
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ log.fuel_station or '-' }}</td>
+                        <td>{{ log.driver.first_name if log.driver else '-' }}</td>
+                        <td>
+                            <a href="{{ url_for('edit_vehicle_fuel_log', vehicle_id=vehicle.id, log_id=log.id) }}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                            <form method="POST" action="{{ url_for('delete_vehicle_fuel_log', vehicle_id=vehicle.id, log_id=log.id) }}" class="d-inline" onsubmit="return confirm('Delete this fuel entry?');">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-fuel-pump fs-1 d-block mb-3"></i>
+            <p>No fuel entries found for this vehicle.</p>
+            <a href="{{ url_for('create_vehicle_fuel_log', id=vehicle.id) }}" class="btn btn-primary">
+                <i class="bi bi-plus-lg"></i> Add First Fuel Entry
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Efficiency Stats -->
+{% if best_efficiency > 0 %}
+<div class="card mt-3">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-graph-up"></i> Efficiency Statistics</h5>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-4 text-center">
+                <h4 class="text-success mb-0">{{ "%.1f".format(best_efficiency) }} km/L</h4>
+                <small class="text-muted">Best Efficiency</small>
+            </div>
+            <div class="col-md-4 text-center">
+                <h4 class="text-warning mb-0">{{ "%.1f".format(avg_efficiency) }} km/L</h4>
+                <small class="text-muted">Average Efficiency</small>
+            </div>
+            <div class="col-md-4 text-center">
+                <h4 class="text-danger mb-0">{{ "%.1f".format(worst_efficiency) }} km/L</h4>
+                <small class="text-muted">Worst Efficiency</small>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<script>
+function exportFuelLog() {
+    const table = document.getElementById('fuelTable');
+    if (!table) {
+        alert('No data to export');
+        return;
+    }
+    
+    let csv = [];
+    const rows = table.querySelectorAll('tr');
+    
+    rows.forEach(row => {
+        let cols = row.querySelectorAll('td, th');
+        let rowData = [];
+        cols.forEach((col, index) => {
+            if (index < 9) { // Skip actions column
+                rowData.push('"' + col.innerText.replace(/"/g, '""') + '"');
+            }
+        });
+        csv.push(rowData.join(','));
+    });
+    
+    const csvContent = '\uFEFF' + csv.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'Fuel_Log_{{ vehicle.registration_number }}.csv');
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+</script>
+{% endblock %}

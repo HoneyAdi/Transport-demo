@@ -1,0 +1,184 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ 'Edit' if edit else 'Add' }} Fuel Entry - {{ vehicle.registration_number }}{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="navbar-top d-flex justify-content-between align-items-center">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-fuel-pump"></i> 
+            {{ 'Edit' if edit else 'Add' }} Fuel Entry
+            <small class="text-muted fs-6">- {{ vehicle.registration_number }}</small>
+        </h4>
+    </div>
+    <div>
+        <a href="{{ url_for('vehicle_fuel_log', id=vehicle.id) }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Fuel Log
+        </a>
+    </div>
+</div>
+
+<!-- Fuel Entry Form -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-fuel-pump"></i> Fuel Entry Details</h5>
+    </div>
+    <div class="card-body">
+        <form method="POST" enctype="multipart/form-data" class="needs-validation" novalidate>
+            <div class="row g-3">
+                <!-- Fueling Date -->
+                <div class="col-md-4">
+                    <label class="form-label">Fueling Date <span class="text-danger">*</span></label>
+                    <input type="date" name="fueling_date" class="form-control" required
+                           value="{{ fuel_log.fueling_date.strftime('%Y-%m-%d') if edit and fuel_log.fueling_date else today }}">
+                </div>
+                
+                <!-- Odometer Reading -->
+                <div class="col-md-4">
+                    <label class="form-label">Odometer Reading (km) <span class="text-danger">*</span></label>
+                    <input type="number" name="odometer_reading" class="form-control" required min="0"
+                           value="{{ fuel_log.odometer_reading if edit else '' }}"
+                           placeholder="Current odometer reading">
+                </div>
+                
+                <!-- Fuel Type -->
+                <div class="col-md-4">
+                    <label class="form-label">Fuel Type</label>
+                    <select name="fuel_type" class="form-select">
+                        <option value="">Select Fuel Type</option>
+                        {% for ftype in fuel_types %}
+                        <option value="{{ ftype }}" {% if edit and fuel_log.fuel_type == ftype %}selected{% endif %}>{{ ftype }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <!-- Fuel Quantity -->
+                <div class="col-md-3">
+                    <label class="form-label">Fuel Quantity (Liters) <span class="text-danger">*</span></label>
+                    <input type="number" name="fuel_liters" class="form-control" required min="0" step="0.01"
+                           value="{{ fuel_log.fuel_liters if edit else '' }}"
+                           onchange="calculateTotal()" id="fuelLiters"
+                           placeholder="Liters">
+                </div>
+                
+                <!-- Price per Liter -->
+                <div class="col-md-3">
+                    <label class="form-label">Price per Liter (₹)</label>
+                    <input type="number" name="fuel_price_per_liter" class="form-control" min="0" step="0.01"
+                           value="{{ fuel_log.fuel_price_per_liter if edit else '' }}"
+                           onchange="calculateTotal()" id="pricePerLiter"
+                           placeholder="₹ per liter">
+                </div>
+                
+                <!-- Total Cost -->
+                <div class="col-md-3">
+                    <label class="form-label">Total Cost (₹) <span class="text-danger">*</span></label>
+                    <input type="number" name="total_cost" class="form-control" required min="0" step="0.01"
+                           value="{{ fuel_log.total_cost if edit else '' }}" id="totalCost"
+                           placeholder="Total amount">
+                </div>
+                
+                <!-- Payment Method -->
+                <div class="col-md-3">
+                    <label class="form-label">Payment Method</label>
+                    <select name="payment_method" class="form-select">
+                        <option value="">Select Method</option>
+                        {% for pm in payment_methods %}
+                        <option value="{{ pm }}" {% if edit and fuel_log.payment_method == pm %}selected{% endif %}>{{ pm }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <!-- Fuel Station -->
+                <div class="col-md-6">
+                    <label class="form-label">Fuel Station/Vendor</label>
+                    <input type="text" name="fuel_station" class="form-control"
+                           value="{{ fuel_log.fuel_station if edit else '' }}"
+                           placeholder="Station name">
+                </div>
+                
+                <!-- Receipt Number -->
+                <div class="col-md-6">
+                    <label class="form-label">Receipt/Bill Number</label>
+                    <input type="text" name="receipt_number" class="form-control"
+                           value="{{ fuel_log.receipt_number if edit else '' }}"
+                           placeholder="Receipt number">
+                </div>
+                
+                <!-- Driver -->
+                <div class="col-md-6">
+                    <label class="form-label">Driver (who fueled)</label>
+                    <select name="driver_id" class="form-select">
+                        <option value="">Select Driver</option>
+                        {% for driver in drivers %}
+                        <option value="{{ driver.id }}" {% if edit and fuel_log.driver_id == driver.id %}selected{% endif %}>
+                            {{ driver.first_name }} {{ driver.last_name or '' }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <!-- Receipt Upload -->
+                <div class="col-md-6">
+                    <label class="form-label">Upload Receipt</label>
+                    <input type="file" name="receipt_file" class="form-control" accept=".pdf,.jpg,.jpeg,.png">
+                    {% if edit and fuel_log.receipt_path %}
+                    <small class="text-muted">
+                        Current: <a href="{{ url_for('static', filename=fuel_log.receipt_path) }}" target="_blank">View Receipt</a>
+                    </small>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <hr class="my-4">
+            
+            <!-- Notes -->
+            <div class="mb-3">
+                <label class="form-label">Additional Notes</label>
+                <textarea name="notes" class="form-control" rows="3" 
+                          placeholder="Any additional notes...">{{ fuel_log.notes if edit else '' }}</textarea>
+            </div>
+            
+            <!-- Submit Buttons -->
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-lg"></i> {{ 'Update' if edit else 'Save' }} Fuel Entry
+                </button>
+                <a href="{{ url_for('vehicle_fuel_log', id=vehicle.id) }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-x-lg"></i> Cancel
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function calculateTotal() {
+    const liters = parseFloat(document.getElementById('fuelLiters').value) || 0;
+    const price = parseFloat(document.getElementById('pricePerLiter').value) || 0;
+    const totalInput = document.getElementById('totalCost');
+    
+    if (liters > 0 && price > 0) {
+        totalInput.value = (liters * price).toFixed(2);
+    }
+}
+
+// Form validation
+(function() {
+    'use strict';
+    window.addEventListener('load', function() {
+        var forms = document.getElementsByClassName('needs-validation');
+        var validation = Array.prototype.filter.call(forms, function(form) {
+            form.addEventListener('submit', function(event) {
+                if (form.checkValidity() === false) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+                form.classList.add('was-validated');
+            }, false);
+        });
+    }, false);
+})();
+</script>
+{% endblock %}

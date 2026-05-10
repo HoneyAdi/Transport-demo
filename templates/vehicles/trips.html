@@ -1,0 +1,249 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ vehicle.registration_number }} - Trip History{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="navbar-top d-flex justify-content-between align-items-center">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-truck"></i> 
+            <span class="text-primary">{{ vehicle.registration_number }}</span>
+            <small class="text-muted fs-6">- Trip History</small>
+        </h4>
+        <small class="text-muted">
+            {% if vehicle.make %}{{ vehicle.make }}{% endif %}
+            {% if vehicle.model %}{{ vehicle.model }}{% endif %}
+        </small>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{{ url_for('vehicle_dashboard', id=vehicle.id) }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </a>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card h-100 border-primary">
+            <div class="card-body text-center">
+                <h6 class="text-muted mb-2">Total Trips</h6>
+                <h3 class="text-primary mb-0">{{ total_trips }}</h3>
+                <small class="text-muted">{{ 'Filtered' if filters.date_from or filters.date_to else 'All time' }}</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100 border-success">
+            <div class="card-body text-center">
+                <h6 class="text-muted mb-2">Total Revenue</h6>
+                <h3 class="text-success mb-0">₹{{ "{:,.0f}".format(total_revenue) }}</h3>
+                <small class="text-muted">From selected trips</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100 border-info">
+            <div class="card-body text-center">
+                <h6 class="text-muted mb-2">Avg Revenue/Trip</h6>
+                <h3 class="text-info mb-0">₹{{ "{:,.0f}".format(avg_revenue) }}</h3>
+                <small class="text-muted">Per trip average</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100 border-warning">
+            <div class="card-body text-center">
+                <h6 class="text-muted mb-2">Status Breakdown</h6>
+                <div class="d-flex justify-content-center flex-wrap gap-1 mt-2">
+                    {% for status, count in status_counts.items() %}
+                    <span class="badge bg-{{ 
+                        {'planned': 'info', 'dispatched': 'primary', 'in_transit': 'warning', 
+                         'delayed': 'danger', 'delivered': 'success', 'closed': 'dark'}
+                        .get(status, 'secondary') 
+                    }}">{{ status.replace('_', ' ').title() }}: {{ count }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filter Panel -->
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-funnel"></i> Filters</h5>
+        <a href="{{ url_for('vehicle_trips', id=vehicle.id) }}" class="btn btn-sm btn-outline-secondary">Clear All</a>
+    </div>
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('vehicle_trips', id=vehicle.id) }}" class="row g-3">
+            <div class="col-md-2">
+                <label class="form-label">Date From</label>
+                <input type="date" name="date_from" class="form-control" value="{{ filters.date_from }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Date To</label>
+                <input type="date" name="date_to" class="form-control" value="{{ filters.date_to }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Status</label>
+                <select name="status" class="form-select" multiple size="1">
+                    <option value="" {% if not filters.status %}selected{% endif %}>All Status</option>
+                    <option value="planned" {% if 'planned' in filters.status %}selected{% endif %}>Planned</option>
+                    <option value="dispatched" {% if 'dispatched' in filters.status %}selected{% endif %}>Dispatched</option>
+                    <option value="in_transit" {% if 'in_transit' in filters.status %}selected{% endif %}>In Transit</option>
+                    <option value="delayed" {% if 'delayed' in filters.status %}selected{% endif %}>Delayed</option>
+                    <option value="delivered" {% if 'delivered' in filters.status %}selected{% endif %}>Delivered</option>
+                    <option value="closed" {% if 'closed' in filters.status %}selected{% endif %}>Closed</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Party/Customer</label>
+                <input type="text" name="party" class="form-control" placeholder="Search party..." value="{{ filters.party }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Route (Origin/Dest)</label>
+                <input type="text" name="route" class="form-control" placeholder="Search route..." value="{{ filters.route }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Min Amount (₹)</label>
+                <input type="number" name="min_amount" class="form-control" placeholder="0" value="{{ filters.min_amount }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Max Amount (₹)</label>
+                <input type="number" name="max_amount" class="form-control" placeholder="∞" value="{{ filters.max_amount }}">
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-search"></i> Apply Filters
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Trips Table -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-list"></i> Trip List</h5>
+        <div>
+            <button onclick="exportToExcel()" class="btn btn-sm btn-success">
+                <i class="bi bi-file-excel"></i> Export to Excel
+            </button>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        {% if trips %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="tripsTable">
+                <thead class="table-light">
+                    <tr>
+                        <th>Trip #</th>
+                        <th>Date</th>
+                        <th>Party/Customer</th>
+                        <th>Route</th>
+                        <th>GR/Bilty No</th>
+                        <th>Status</th>
+                        <th class="text-end">Revenue (₹)</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trip, bill in trips %}
+                    <tr>
+                        <td>
+                            <span class="badge bg-primary">{{ trip.trip_number or '-' }}</span>
+                        </td>
+                        <td>{{ trip.trip_date.strftime('%d-%b-%Y') if trip.trip_date else '-' }}</td>
+                        <td>
+                            {% if bill and bill.party_information %}
+                                <strong>{{ bill.party_information }}</strong>
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if trip.origin or trip.destination %}
+                                <small>
+                                    {{ trip.origin or '?' }} 
+                                    <i class="bi bi-arrow-right"></i> 
+                                    {{ trip.destination or '?' }}
+                                </small>
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if bill %}
+                                <small class="font-monospace">{{ bill.gr_number or '-' }}</small>
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="badge bg-{{ 
+                                {'planned': 'info', 'dispatched': 'primary', 'in_transit': 'warning', 
+                                 'delayed': 'danger', 'delivered': 'success', 'closed': 'dark'}
+                                .get(trip.status, 'secondary') 
+                            }}">{{ (trip.status or 'Unknown').replace('_', ' ').title() }}</span>
+                        </td>
+                        <td class="text-end">
+                            <strong>₹{{ "{:,.0f}".format(bill.rate or 0) }}</strong>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <a href="{{ url_for('print_bilty', id=trip.bilty_id) }}" class="btn btn-outline-info" target="_blank" title="Print Bilty">
+                                    <i class="bi bi-printer"></i>
+                                </a>
+                                <a href="{{ url_for('edit_transport_bill', id=trip.bilty_id) }}" class="btn btn-outline-primary" title="Edit Bill">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="table-light">
+                    <tr>
+                        <td colspan="6" class="text-end"><strong>Total:</strong></td>
+                        <td class="text-end"><strong>₹{{ "{:,.0f}".format(total_revenue) }}</strong></td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-inbox fs-1 d-block mb-3"></i>
+            <h5>No trips found</h5>
+            <p>No trips match the selected filters.</p>
+            <a href="{{ url_for('vehicle_trips', id=vehicle.id) }}" class="btn btn-outline-primary">
+                <i class="bi bi-arrow-counterclockwise"></i> Clear Filters
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+function exportToExcel() {
+    const table = document.getElementById('tripsTable');
+    let html = table.outerHTML;
+    
+    // Create a blob
+    const blob = new Blob(['\ufeff', html], {
+        type: 'application/vnd.ms-excel'
+    });
+    
+    // Create download link
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = '{{ vehicle.registration_number }}_Trips_{{ filters.date_from or "all" }}_to_{{ filters.date_to or "all" }}.xls';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+</script>
+{% endblock %}

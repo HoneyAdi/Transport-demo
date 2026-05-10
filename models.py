@@ -84,20 +84,10 @@ def from_json_filter(s):
     except (ValueError, TypeError):
         return None
 
-db_host = os.environ.get("DB_HOST", "localhost")
-db_user = os.environ.get("DB_USER", "root")
-db_password = os.environ.get("DB_PASSWORD", "admin")
-db_name = os.environ.get("DB_NAME", "transport_db")
-
-default_database_url = (
-    f"mysql+pymysql://{quote_plus(db_user)}:{quote_plus(db_password)}@{db_host}/{db_name}"
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
+    "DATABASE_URL",
+    "sqlite:///transport.db"
 )
-database_url = os.environ.get("DATABASE_URL", default_database_url)
-
-if database_url == default_database_url:
-    ensure_mysql_database(db_host, db_user, db_password, db_name)
-
-app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db = SQLAlchemy(app)
@@ -599,6 +589,7 @@ class AuditLog(db.Model):
 
 
 class CustomerPortalAccount(db.Model):
+    """Customer portal accounts for self-service access"""
     __tablename__ = "customer_portal_accounts"
     __table_args__ = (
         UniqueConstraint("tenant_id", "email", name="uq_customer_portal_email_tenant"),
@@ -613,6 +604,19 @@ class CustomerPortalAccount(db.Model):
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_login_at = db.Column(db.DateTime)
+    
+    # Portal enhancement fields
+    last_login_ip = db.Column(db.String(45))
+    login_count = db.Column(db.Integer, default=0)
+    failed_login_attempts = db.Column(db.Integer, default=0)
+    account_locked_until = db.Column(db.DateTime)
+    password_changed_at = db.Column(db.DateTime)
+    two_factor_enabled = db.Column(db.Boolean, default=False)
+    two_factor_secret = db.Column(db.String(32))
+    notification_preferences = db.Column(db.Text)  # JSON for notification settings
+    language_preference = db.Column(db.String(10), default='en')
+    timezone_preference = db.Column(db.String(50), default='UTC')
+    portal_theme = db.Column(db.String(20), default='light')
 
     tenant = db.relationship("Tenant")
     vendor = db.relationship("Vendor")
@@ -802,6 +806,15 @@ class Vendor(db.Model):
     primary_contact_phone = db.Column(db.String(20))
     primary_contact_mobile = db.Column(db.String(20))
     primary_contact_email = db.Column(db.String(150))
+    
+    # 8. Customer Classification Fields
+    customer_type = db.Column(db.String(50), default='regular')  # regular, premium, vip, one_time
+    customer_tier = db.Column(db.String(20), default='bronze')   # bronze, silver, gold, platinum
+    customer_segment = db.Column(db.String(100))  # manufacturing, logistics, retail, etc.
+    customer_lifecycle_status = db.Column(db.String(20), default='active')  # active, inactive, blacklisted, dormant
+    classification_notes = db.Column(db.Text)
+    classification_date = db.Column(db.Date, default=date.today)
+    classified_by = db.Column(db.Integer, db.ForeignKey("users.id"))
 
     # 8. Secondary Contact Person
     secondary_contact_name = db.Column(db.String(100))
@@ -1463,7 +1476,7 @@ def initialize_database():
         ensure_tenant_permission_rows()
 
 
-initialize_database()
+# initialize_database()  # Commented out for SQLite compatibility
 class SubscriptionPlan(db.Model):
     __tablename__ = "subscription_plans"
 
@@ -1529,7 +1542,481 @@ class SubscriptionPayment(db.Model):
     status = db.Column(db.String(20), default="success")
     notes = db.Column(db.Text)
     invoice_url = db.Column(db.String(255))
-    
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+
     subscription = db.relationship("TenantSubscription", backref="payments")
+
+
+class VehicleServiceLog(db.Model):
+    """Service and maintenance history log for vehicles"""
+    __tablename__ = "vehicle_service_logs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey("tenants.id"), index=True)
+    vehicle_id = db.Column(db.Integer, db.ForeignKey("vehicles.id"), nullable=False, index=True)
+
+    # Service Details
+    service_date = db.Column(db.Date, nullable=False)
+    service_type = db.Column(db.String(50), nullable=False)  # oil_change, filter_replacement, tire_service, etc.
+    service_description = db.Column(db.Text)
+
+    # Odometer Reading
+    odometer_reading = db.Column(db.Integer)
+
+    # Garage/Service Center Information
+    garage_name = db.Column(db.String(200))
+    garage_contact = db.Column(db.String(20))
+    garage_address = db.Column(db.Text)
+
+    # Parts Replaced (stored as JSON string)
+    parts_replaced = db.Column(db.Text)  # JSON: [{"part": "Oil Filter", "cost": 500}]
+
+    # Costs
+    labor_cost = db.Column(db.Numeric(10, 2), default=0)
+    parts_cost = db.Column(db.Numeric(10, 2), default=0)
+    total_cost = db.Column(db.Numeric(10, 2), default=0)
+
+    # Invoice/Receipt
+    invoice_number = db.Column(db.String(100))
+    invoice_path = db.Column(db.String(500))  # File attachment path
+
+    # Next Service Due
+    next_service_date = db.Column(db.Date)
+    next_service_km = db.Column(db.Integer)
+
+    # Additional Notes
+    notes = db.Column(db.Text)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+
+    vehicle = db.relationship("Vehicle", backref="service_logs")
+    tenant = db.relationship("Tenant")
+    creator = db.relationship("User")
+
+
+class VehicleServiceSchedule(db.Model):
+    """Predefined service schedules for vehicle types"""
+    __tablename__ = "vehicle_service_schedules"
+
+    id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey("tenants.id"), index=True)
+    vehicle_type = db.Column(db.String(50))  # Truck, Container, etc.
+    service_type = db.Column(db.String(50))
+    interval_months = db.Column(db.Integer)
+    interval_km = db.Column(db.Integer)
+    description = db.Column(db.Text)
+
+    tenant = db.relationship("Tenant")
+
+
+class VehicleFuelLog(db.Model):
+    """Vehicle fuel consumption tracking with efficiency calculations."""
+    __tablename__ = "vehicle_fuel_logs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey("tenants.id"), index=True)
+    vehicle_id = db.Column(db.Integer, db.ForeignKey("vehicles.id"), nullable=False, index=True)
+
+    fueling_date = db.Column(db.Date, nullable=False)
+    odometer_reading = db.Column(db.Integer, nullable=False)
+    fuel_liters = db.Column(db.Numeric(10, 2), nullable=False)
+    fuel_price_per_liter = db.Column(db.Numeric(8, 2))
+    total_cost = db.Column(db.Numeric(10, 2))
+
+    fuel_station = db.Column(db.String(200))
+    fuel_type = db.Column(db.String(20))  # Diesel, Petrol, CNG
+
+    driver_id = db.Column(db.Integer, db.ForeignKey("drivers.id"))
+    payment_method = db.Column(db.String(50))
+    receipt_number = db.Column(db.String(100))
+    receipt_path = db.Column(db.String(500))
+
+    # Calculated fields
+    distance_since_last = db.Column(db.Integer)
+    efficiency_km_per_liter = db.Column(db.Numeric(5, 2))
+    cost_per_km = db.Column(db.Numeric(8, 2))
+
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+
+    vehicle = db.relationship("Vehicle", backref="fuel_logs")
+    driver = db.relationship("Driver")
+    tenant = db.relationship("Tenant")
+    creator = db.relationship("User")
+
+
+class VehicleDriverAssignment(db.Model):
+    """Historical tracking of driver assignments to vehicles."""
+    __tablename__ = "vehicle_driver_assignments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey("tenants.id"), index=True)
+    vehicle_id = db.Column(db.Integer, db.ForeignKey("vehicles.id"), nullable=False, index=True)
+    driver_id = db.Column(db.Integer, db.ForeignKey("drivers.id"), nullable=False, index=True)
+
+    # Assignment Details
+    assigned_at = db.Column(db.DateTime, default=datetime.utcnow)
+    assigned_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    assignment_date = db.Column(db.Date, default=date.today)
+
+    # End Assignment Details
+    ended_at = db.Column(db.DateTime)
+    ended_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    end_date = db.Column(db.Date)
+    end_reason = db.Column(db.Text)
+
+    # Notes
+    assignment_notes = db.Column(db.Text)
+    handover_notes = db.Column(db.Text)
+
+    # Status
+    is_active = db.Column(db.Boolean, default=True)
+
+    # Relationships
+    vehicle = db.relationship("Vehicle", backref="driver_assignments")
+    driver = db.relationship("Driver", backref="vehicle_assignments")
+    assigner = db.relationship("User", foreign_keys=[assigned_by])
+    ender = db.relationship("User", foreign_keys=[ended_by])
+
+    @property
+    def duration_days(self):
+        if self.end_date:
+            return (self.end_date - self.assignment_date).days
+        return (date.today() - self.assignment_date).days
+
+
+class CustomerCategory(db.Model):
+    """Customer category definitions for classification"""
+    __tablename__ = "customer_categories"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "category_code", name="uq_customer_category_tenant"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey("tenants.id"), index=True)
+    category_name = db.Column(db.String(100), nullable=False)
+    category_code = db.Column(db.String(20), nullable=False)
+    description = db.Column(db.Text)
+    
+    # Credit Settings
+    min_credit_limit = db.Column(db.Numeric(12, 2), default=0)
+    max_credit_limit = db.Column(db.Numeric(12, 2), default=0)
+    default_payment_terms = db.Column(db.String(50), default='Net 30')
+    
+    # Service Level Settings
+    service_priority = db.Column(db.String(20), default='medium')  # low, medium, high, urgent
+    sla_hours = db.Column(db.Integer, default=48)  # Service Level Agreement hours
+    
+    # Status
+    is_active = db.Column(db.Boolean, default=True)
+    sort_order = db.Column(db.Integer, default=0)
+    
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    tenant = db.relationship("Tenant")
+
+
+class CustomerCredit(db.Model):
+    """Customer credit management for transport business"""
+    __tablename__ = "customer_credits"
+    __table_args__ = (
+        UniqueConstraint("vendor_id", name="uq_customer_credit_vendor"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey("tenants.id"), index=True)
+    vendor_id = db.Column(db.Integer, db.ForeignKey("vendors.id"), nullable=False, index=True)
+    
+    # Credit Limits
+    credit_limit = db.Column(db.Numeric(12, 2), default=0)
+    available_credit = db.Column(db.Numeric(12, 2), default=0)
+    current_outstanding = db.Column(db.Numeric(12, 2), default=0)
+    
+    # Credit Terms
+    credit_period_days = db.Column(db.Integer, default=30)  # Net 15, 30, 60 days
+    payment_terms = db.Column(db.String(50), default='Net 30')
+    
+    # Status
+    is_credit_hold = db.Column(db.Boolean, default=False)
+    hold_reason = db.Column(db.Text)
+    credit_status = db.Column(db.String(20), default='active')  # active, hold, suspended
+    
+    # Monitoring
+    last_payment_date = db.Column(db.Date)
+    last_invoice_date = db.Column(db.Date)
+    dso_days = db.Column(db.Integer, default=0)  # Days Sales Outstanding
+    
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    
+    # Relationships
+    vendor = db.relationship("Vendor", backref="credit_info")
+    tenant = db.relationship("Tenant")
+    creator = db.relationship("User", foreign_keys=[created_by])
+    
+    @property
+    def credit_utilization_pct(self):
+        if self.credit_limit and self.credit_limit > 0:
+            return (self.current_outstanding / self.credit_limit) * 100
+        return 0
+
+
+class CustomerNotification(db.Model):
+    """Customer notifications and preferences"""
+    __tablename__ = "customer_notifications"
+
+    id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey("tenants.id"))
+    vendor_id = db.Column(db.Integer, db.ForeignKey("vendors.id"), nullable=False, index=True)
+    
+    # Notification Details
+    notification_type = db.Column(db.String(50))  # payment_reminder, delivery_update, document_upload, general
+    title = db.Column(db.String(200), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    
+    # Status
+    is_read = db.Column(db.Boolean, default=False)
+    is_email_sent = db.Column(db.Boolean, default=False)
+    is_sms_sent = db.Column(db.Boolean, default=False)
+    is_push_sent = db.Column(db.Boolean, default=True)
+    
+    # Preferences
+    email_enabled = db.Column(db.Boolean, default=True)
+    sms_enabled = db.Column(db.Boolean, default=False)
+    push_enabled = db.Column(db.Boolean, default=True)
+    
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    read_at = db.Column(db.DateTime)
+    
+    # Relationships
+    vendor = db.relationship("Vendor", backref="notifications")
+    tenant = db.relationship("Tenant")
+
+
+class CustomerDocument(db.Model):
+    """Customer uploaded documents"""
+    __tablename__ = "customer_documents"
+
+    id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey("tenants.id"))
+    vendor_id = db.Column(db.Integer, db.ForeignKey("vendors.id"), nullable=False, index=True)
+    
+    # Document Details
+    document_type = db.Column(db.String(50))  # invoice, receipt, contract, identity_proof, other
+    document_name = db.Column(db.String(200), nullable=False)
+    file_path = db.Column(db.String(500), nullable=False)
+    file_size = db.Column(db.Integer)
+    mime_type = db.Column(db.String(100))
+    
+    # Status
+    status = db.Column(db.String(20), default='pending')  # pending, approved, rejected
+    uploaded_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    approved_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    approved_at = db.Column(db.DateTime)
+    rejection_reason = db.Column(db.Text)
+    
+    # Timestamps
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
+    expires_at = db.Column(db.DateTime)
+    
+    # Relationships
+    vendor = db.relationship("Vendor", backref="documents")
+    uploader = db.relationship("User", foreign_keys=[uploaded_by])
+    approver = db.relationship("User", foreign_keys=[approved_by])
+    tenant = db.relationship("Tenant")
+
+
+class CustomerAnalytics(db.Model):
+    """Customer performance analytics cache and calculation results"""
+    __tablename__ = "customer_analytics"
+    __table_args__ = (
+        UniqueConstraint("vendor_id", "period_start", "period_end", name="uq_customer_analytics_period"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey("tenants.id"), index=True)
+    vendor_id = db.Column(db.Integer, db.ForeignKey("vendors.id"), nullable=False, index=True)
+    
+    # Period Definition
+    period_start = db.Column(db.Date, nullable=False)
+    period_end = db.Column(db.Date, nullable=False)
+    period_type = db.Column(db.String(20), default='monthly')  # daily, weekly, monthly, quarterly, yearly
+    
+    # Performance Metrics
+    total_revenue = db.Column(db.Numeric(15, 2), default=0)
+    total_bills = db.Column(db.Integer, default=0)
+    total_deliveries = db.Column(db.Integer, default=0)
+    on_time_deliveries = db.Column(db.Integer, default=0)
+    delayed_deliveries = db.Column(db.Integer, default=0)
+    
+    # Financial Metrics
+    avg_order_value = db.Column(db.Numeric(12, 2), default=0)
+    total_payments = db.Column(db.Numeric(15, 2), default=0)
+    outstanding_balance = db.Column(db.Numeric(15, 2), default=0)
+    
+    # Satisfaction Metrics
+    customer_satisfaction_score = db.Column(db.Numeric(5, 2), default=0)
+    total_feedback_entries = db.Column(db.Integer, default=0)
+    positive_feedback_percentage = db.Column(db.Numeric(5, 2), default=0)
+    
+    # Calculated Fields
+    on_time_delivery_rate = db.Column(db.Numeric(5, 2), default=0)  # percentage
+    customer_lifetime_value = db.Column(db.Numeric(15, 2), default=0)
+    churn_probability = db.Column(db.Numeric(5, 2), default=0)  # percentage
+    growth_rate = db.Column(db.Numeric(5, 2), default=0)  # percentage
+    
+    # Timestamps
+    calculated_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    vendor = db.relationship("Vendor", backref="analytics")
+    tenant = db.relationship("Tenant")
+
+
+class CustomerCommunication(db.Model):
+    """Customer communication history"""
+    __tablename__ = "customer_communications"
+
+    id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey("tenants.id"))
+    vendor_id = db.Column(db.Integer, db.ForeignKey("vendors.id"), nullable=False, index=True)
+    
+    # Communication Details
+    communication_type = db.Column(db.String(50))  # email, phone, meeting, complaint
+    subject = db.Column(db.String(200))
+    message = db.Column(db.Text, nullable=False)
+    direction = db.Column(db.String(20))  # inbound, outbound
+    
+    # Status & Priority
+    status = db.Column(db.String(20), default='open')  # open, in_progress, resolved, closed
+    priority = db.Column(db.String(20), default='medium')  # low, medium, high, urgent
+    
+    # Metadata
+    communicated_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    communication_date = db.Column(db.DateTime, default=datetime.utcnow)
+    next_followup = db.Column(db.DateTime)
+    
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    vendor = db.relationship("Vendor", backref="communications")
+    communicator = db.relationship("User", foreign_keys=[communicated_by])
+
+
+class CustomerFeedback(db.Model):
+    """Customer feedback collection"""
+    __tablename__ = "customer_feedback"
+
+    id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey("tenants.id"))
+    vendor_id = db.Column(db.Integer, db.ForeignKey("vendors.id"), nullable=False, index=True)
+    
+    # Feedback Details
+    feedback_type = db.Column(db.String(50))  # service, delivery, billing, general
+    rating = db.Column(db.Integer)  # 1-5 stars
+    feedback_text = db.Column(db.Text)
+    resolution_status = db.Column(db.String(20))  # pending, resolved, escalated
+    
+    # Metadata
+    feedback_date = db.Column(db.DateTime, default=datetime.utcnow)
+    resolved_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    resolved_at = db.Column(db.DateTime)
+    
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    vendor = db.relationship("Vendor", backref="feedback")
+    resolver = db.relationship("User", foreign_keys=[resolved_by])
+
+
+class CustomerTransaction(db.Model):
+    """Customer transaction history for credit management"""
+    __tablename__ = "customer_transactions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey("tenants.id"), index=True)
+    vendor_id = db.Column(db.Integer, db.ForeignKey("vendors.id"), nullable=False, index=True)
+    transport_bill_id = db.Column(db.Integer, db.ForeignKey("transport_bills.id"), index=True)
+    
+    # Transaction Details
+    transaction_type = db.Column(db.String(20), nullable=False)  # invoice, payment, credit_adjustment
+    amount = db.Column(db.Numeric(12, 2), nullable=False)
+    balance_after = db.Column(db.Numeric(12, 2), nullable=False)
+    
+    # Payment Details (for payment transactions)
+    payment_method = db.Column(db.String(50))
+    payment_reference = db.Column(db.String(100))
+    bank_reference = db.Column(db.String(100))
+    
+    # Dates
+    transaction_date = db.Column(db.Date, nullable=False)
+    due_date = db.Column(db.Date)
+    
+    # Status
+    status = db.Column(db.String(20), default='completed')  # pending, completed, failed
+    
+    # Notes
+    notes = db.Column(db.Text)
+    internal_notes = db.Column(db.Text)
+    
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    
+    # Relationships
+    vendor = db.relationship("Vendor", backref="transactions")
+    transport_bill = db.relationship("TransportBill", backref="credit_transactions")
+    tenant = db.relationship("Tenant")
+    creator = db.relationship("User", foreign_keys=[created_by])
+
+
+class PodStatus(db.Model):
+    """POD status master table"""
+    __tablename__ = "pod_status"
+    
+    id = db.Column(db.Integer, primary_key=True)
+    status_code = db.Column(db.String(20), unique=True, nullable=False)
+    status_name = db.Column(db.String(50), nullable=False)
+    description = db.Column(db.Text)
+    color_code = db.Column(db.String(10))
+    is_default = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    tenant_id = db.Column(db.Integer, db.ForeignKey('tenants.id'), nullable=False)
+    
+    # Relationships
+    tenant = db.relationship("Tenant", backref="pod_statuses")
+    tracking_entries = db.relationship("PodTracking", backref="status")
+
+
+class PodTracking(db.Model):
+    """POD tracking table for status history"""
+    __tablename__ = "pod_tracking"
+    
+    id = db.Column(db.Integer, primary_key=True)
+    transport_bill_id = db.Column(db.Integer, db.ForeignKey('transport_bills.id'), nullable=False)
+    status_code = db.Column(db.String(20), db.ForeignKey('pod_status.status_code'), nullable=False)
+    timestamp = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+    remarks = db.Column(db.Text)
+    location = db.Column(db.String(200))
+    tenant_id = db.Column(db.Integer, db.ForeignKey('tenants.id'), nullable=False)
+    
+    # Relationships
+    transport_bill = db.relationship('TransportBill', backref='pod_tracking')
+    updated_by_user = db.relationship('User', backref='pod_updates')
+    tenant = db.relationship("Tenant", backref="pod_tracking")

@@ -79,6 +79,19 @@
                         {% if vendor.business_nature %}
                         <br><small class="text-muted">{{ vendor.business_nature }}</small>
                         {% endif %}
+                        {% if vendor.customer_type or vendor.customer_tier %}
+                        <br>
+                        {% if vendor.customer_type %}
+                        <span class="badge bg-{% if vendor.customer_type == 'vip' %}warning{% elif vendor.customer_type == 'premium' %}info{% else %}primary{% endif %}">
+                            {{ vendor.customer_type.title() }}
+                        </span>
+                        {% endif %}
+                        {% if vendor.customer_tier %}
+                        <span class="badge bg-{% if vendor.customer_tier == 'platinum' %}success{% elif vendor.customer_tier == 'gold' %}warning{% elif vendor.customer_tier == 'silver' %}light{% else %}secondary{% endif %}">
+                            {{ vendor.customer_tier.title() }}
+                        </span>
+                        {% endif %}
+                        {% endif %}
                     </td>
                     {% if show_tenant_column %}<td>{{ vendor.tenant.name if vendor.tenant else '-' }}</td>{% endif %}
                     <td>{{ vendor.vendor_type or '-' }}</td>
@@ -127,8 +140,16 @@
                     </td>
                     <td>
                         <div class="btn-group btn-group-sm">
+                            {% if has_permission('vendors', 'view') %}
+                            <a href="{{ url_for('customer_communications', vendor_id=vendor.id) }}" class="btn btn-outline-info" title="Communications">
+                                <i class="bi bi-chat-dots"></i>
+                            </a>
+                            <a href="{{ url_for('customer_credit_management', id=vendor.id) }}" class="btn btn-outline-primary" title="Credit Management">
+                                <i class="bi bi-credit-card"></i>
+                            </a>
+                            {% endif %}
                             {% if has_permission('vendors', 'edit') %}
-                            <a href="{{ url_for('edit_vendor', id=vendor.id) }}" class="btn btn-outline-primary" title="Edit Vendor">
+                            <a href="{{ url_for('edit_vendor', id=vendor.id) }}" class="btn btn-outline-success" title="Edit Vendor">
                                 <i class="bi bi-pencil"></i>
                             </a>
                             {% endif %}

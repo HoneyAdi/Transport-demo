@@ -1,0 +1,595 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ vehicle.registration_number }} - Vehicle Dashboard{% endblock %}
+
+{% block content %}
+<!-- Vehicle Header -->
+<div class="navbar-top d-flex justify-content-between align-items-center">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-car-front"></i> 
+            <span class="text-primary">{{ vehicle.registration_number }}</span>
+        </h4>
+        <small class="text-muted">
+            {% if vehicle.make %}{{ vehicle.make }}{% endif %}
+            {% if vehicle.model %}{{ vehicle.model }}{% endif %}
+            {% if vehicle.year %}({{ vehicle.year }}){% endif %}
+        </small>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{{ url_for('vehicles') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to List
+        </a>
+        {% if has_permission('vehicles', 'edit') %}
+        <a href="{{ url_for('edit_vehicle', id=vehicle.id) }}" class="btn btn-primary">
+            <i class="bi bi-pencil"></i> Edit Vehicle
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Status Badge & Quick Info -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center gap-3">
+                    <span class="badge bg-{% if vehicle.status == 'Active' %}success{% elif vehicle.status == 'Under Maintenance' %}warning text-dark{% elif vehicle.status == 'Sold' %}danger{% else %}secondary{% endif %} fs-5 px-3 py-2">
+                        <i class="bi bi-circle-fill me-1"></i> {{ vehicle.status }}
+                    </span>
+                    {% if vehicle.vehicle_type %}
+                    <span class="badge bg-info text-dark fs-6">{{ vehicle.vehicle_type }}</span>
+                    {% endif %}
+                    {% if age_text %}
+                    <span class="text-muted">
+                        <i class="bi bi-clock-history"></i> {{ age_text }} old
+                    </span>
+                    {% endif %}
+                </div>
+                <div class="text-end">
+                    <small class="text-muted">Vehicle ID: {{ vehicle.id }}</small>
+                    <br>
+                    <small class="text-muted">Registered: {{ vehicle.created_at.strftime('%Y-%m-%d') }}</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Financial Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <a href="{{ url_for('vehicle_trips', id=vehicle.id) }}" class="text-decoration-none">
+            <div class="card h-100 border-primary">
+                <div class="card-body text-center">
+                    <h6 class="text-muted mb-2">Total Trips</h6>
+                    <h3 class="text-primary mb-0">{{ trip_count }}</h3>
+                    <small class="text-muted">Lifetime</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-3">
+        <a href="{{ url_for('vehicle_trips', id=vehicle.id) }}" class="text-decoration-none">
+            <div class="card h-100 border-success">
+                <div class="card-body text-center">
+                    <h6 class="text-muted mb-2">Total Revenue</h6>
+                    <h3 class="text-success mb-0">₹{{ "{:,.0f}".format(total_revenue|float) }}</h3>
+                    <small class="text-muted">From all trips</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-3">
+        <a href="{{ url_for('vehicle_expenses', id=vehicle.id) }}" class="text-decoration-none">
+            <div class="card h-100 border-warning">
+                <div class="card-body text-center">
+                    <h6 class="text-muted mb-2">Total Expenses</h6>
+                    <h3 class="text-warning mb-0">₹{{ "{:,.0f}".format(total_expenses|float) }}</h3>
+                    <small class="text-muted">Fuel, maintenance, etc.</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-3">
+        <a href="{{ url_for('vehicle_profitability', id=vehicle.id) }}" class="text-decoration-none">
+            <div class="card h-100 border-{% if net_profit >= 0 %}success{% else %}danger{% endif %}">
+                <div class="card-body text-center">
+                    <h6 class="text-muted mb-2">Net Profit/Loss</h6>
+                    <h3 class="text-{% if net_profit >= 0 %}success{% else %}danger{% endif %} mb-0">
+                        ₹{{ "{:,.0f}".format(net_profit|float) }}
+                    </h3>
+                    <small class="text-muted">Revenue - Expenses</small>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>
+
+<!-- Main Content Row -->
+<div class="row">
+    <!-- Left Column: Vehicle Details -->
+    <div class="col-lg-8">
+        <!-- Vehicle Information -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> Vehicle Information</h5>
+                {% if has_permission('vehicles', 'edit') %}
+                <a href="{{ url_for('edit_vehicle', id=vehicle.id) }}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-pencil"></i> Edit
+                </a>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <!-- Basic Details -->
+                    <div class="col-md-6">
+                        <table class="table table-borderless table-sm">
+                            <tr>
+                                <td class="text-muted" width="40%">Registration</td>
+                                <td><strong>{{ vehicle.registration_number }}</strong></td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">Vehicle Type</td>
+                                <td>{{ vehicle.vehicle_type or '-' }}</td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">Make</td>
+                                <td>{{ vehicle.make or '-' }}</td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">Model</td>
+                                <td>{{ vehicle.model or '-' }}</td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">Year</td>
+                                <td>{{ vehicle.year or '-' }}</td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">Color</td>
+                                <td>{{ vehicle.color or '-' }}</td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">Fuel Type</td>
+                                <td>{{ vehicle.fuel_type or '-' }}</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <div class="col-md-6">
+                        <table class="table table-borderless table-sm">
+                            <tr>
+                                <td class="text-muted" width="40%">Engine No</td>
+                                <td>{{ vehicle.engine_number or '-' }}</td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">Chassis No</td>
+                                <td>{{ vehicle.chassis_number or '-' }}</td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">Seating</td>
+                                <td>{{ vehicle.seating_capacity or '-' }} seats</td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">Load Capacity</td>
+                                <td>{{ "{:,.0f}".format(vehicle.load_capacity_kg) if vehicle.load_capacity_kg else '-' }} kg</td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">Purchase Date</td>
+                                <td>{{ vehicle.purchase_date.strftime('%d-%b-%Y') if vehicle.purchase_date else '-' }}</td>
+                            </tr>
+                            <tr>
+                                <td class="text-muted">Truck Size</td>
+                                <td>{{ vehicle.truck_size or '-' }}</td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Owner Information -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-person"></i> Owner Information</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <p class="mb-1"><strong class="text-muted">Owner Name:</strong></p>
+                        <p class="fs-5">{{ vehicle.owner_name or 'Not specified' }}</p>
+                    </div>
+                    <div class="col-md-6">
+                        <p class="mb-1"><strong class="text-muted">Contact:</strong></p>
+                        <p class="fs-5">{{ vehicle.owner_contact or 'Not specified' }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Trips -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-truck"></i> Recent Trips</h5>
+                <a href="{{ url_for('vehicle_trips', id=vehicle.id) }}" class="btn btn-sm btn-outline-primary">View All Trips</a>
+            </div>
+            <div class="card-body p-0">
+                {% if recent_trips %}
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Trip #</th>
+                                <th>Date</th>
+                                <th>Route</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for trip in recent_trips %}
+                            <tr>
+                                <td><span class="badge bg-primary">{{ trip.trip_number }}</span></td>
+                                <td>{{ trip.trip_date.strftime('%d-%b-%Y') }}</td>
+                                <td>
+                                    {% if trip.origin %}{{ trip.origin }}{% endif %}
+                                    {% if trip.origin and trip.destination %} → {% endif %}
+                                    {% if trip.destination %}{{ trip.destination }}{% endif %}
+                                    {% if not trip.origin and not trip.destination %}-{% endif %}
+                                </td>
+                                <td>
+                                    <span class="badge bg-{{ 
+                                        {'planned': 'info', 'dispatched': 'primary', 'in_transit': 'warning', 
+                                         'delayed': 'danger', 'delivered': 'success', 'closed': 'dark'}
+                                        .get(trip.status, 'secondary') 
+                                    }}">{{ trip.status.replace('_', ' ').title() }}</span>
+                                </td>
+                                <td>
+                                    <a href="{{ url_for('print_bilty', id=trip.bilty_id) }}" class="btn btn-sm btn-outline-info" target="_blank">
+                                        <i class="bi bi-printer"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-4 text-muted">
+                    <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+                    No trips recorded for this vehicle yet.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Service History Summary -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-wrench"></i> Service History</h5>
+                <a href="{{ url_for('vehicle_services', id=vehicle.id) }}" class="btn btn-sm btn-outline-primary">View All Services</a>
+            </div>
+            <div class="card-body">
+                {% if vehicle.service_logs %}
+                {% set recent_services = vehicle.service_logs|sort(attribute='service_date', reverse=True)|list %}
+                {% set last_service = recent_services[0] if recent_services else None %}
+                {% set total_service_cost = recent_services|sum(attribute='total_cost') %}
+                {% set services_this_year = recent_services|selectattr('service_date', 'ge', date.today().replace(month=1, day=1))|list|length %}
+                
+                <div class="row text-center mb-3">
+                    <div class="col-4">
+                        <h5 class="text-primary mb-0">{{ recent_services|length }}</h5>
+                        <small class="text-muted">Total Services</small>
+                    </div>
+                    <div class="col-4">
+                        <h5 class="text-warning mb-0">₹{{ "{:,.0f}".format(total_service_cost|float) }}</h5>
+                        <small class="text-muted">Total Spent</small>
+                    </div>
+                    <div class="col-4">
+                        <h5 class="text-info mb-0">{{ services_this_year }}</h5>
+                        <small class="text-muted">This Year</small>
+                    </div>
+                </div>
+                
+                {% if last_service %}
+                <hr>
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <small class="text-muted">Last Service</small>
+                        <br>
+                        <strong>{{ last_service.service_date.strftime('%d %b %Y') }}</strong>
+                        <br>
+                        <span class="badge bg-secondary">{{ last_service.service_type }}</span>
+                    </div>
+                    <div class="text-end">
+                        <small class="text-muted">Cost</small>
+                        <br>
+                        <strong>₹{{ "{:,.0f}".format(last_service.total_cost|float) }}</strong>
+                        {% if last_service.next_service_date %}
+                        <br>
+                        <small class="{% if (last_service.next_service_date - date.today()).days < 0 %}text-danger{% elif (last_service.next_service_date - date.today()).days <= 7 %}text-warning{% else %}text-success{% endif %}">
+                            Next: {{ last_service.next_service_date.strftime('%d %b %Y') }}
+                        </small>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+                
+                <div class="mt-3">
+                    <a href="{{ url_for('create_vehicle_service', id=vehicle.id) }}" class="btn btn-sm btn-outline-success w-100">
+                        <i class="bi bi-plus-lg"></i> Add New Service Record
+                    </a>
+                </div>
+                {% else %}
+                <div class="text-center py-3 text-muted">
+                    <i class="bi bi-wrench fs-1 d-block mb-2"></i>
+                    No service records yet.
+                    <br>
+                    <a href="{{ url_for('create_vehicle_service', id=vehicle.id) }}" class="btn btn-sm btn-primary mt-2">
+                        <i class="bi bi-plus-lg"></i> Add First Service Record
+                    </a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Fuel Log Summary -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-fuel-pump"></i> Fuel Log</h5>
+                <a href="{{ url_for('vehicle_fuel_log', id=vehicle.id) }}" class="btn btn-sm btn-outline-primary">View All Entries</a>
+            </div>
+            <div class="card-body">
+                {% if vehicle.fuel_logs %}
+                {% set recent_fuel = vehicle.fuel_logs|sort(attribute='fueling_date', reverse=True)|list %}
+                {% set last_fuel = recent_fuel[0] if recent_fuel else None %}
+                {% set total_liters = recent_fuel|sum(attribute='fuel_liters') %}
+                {% set total_fuel_cost = recent_fuel|sum(attribute='total_cost') %}
+                {% set efficiencies = [] %}
+                {% for log in recent_fuel %}
+                    {% if log.efficiency_km_per_liter %}
+                        {% set _ = efficiencies.append(log.efficiency_km_per_liter|float) %}
+                    {% endif %}
+                {% endfor %}
+                {% set avg_efficiency = (efficiencies|sum / efficiencies|length) if efficiencies else 0 %}
+                
+                <div class="row text-center mb-3">
+                    <div class="col-4">
+                        <h5 class="text-primary mb-0">{{ "%.1f".format(total_liters) }}</h5>
+                        <small class="text-muted">Total Liters</small>
+                    </div>
+                    <div class="col-4">
+                        <h5 class="text-success mb-0">{{ "%.1f".format(avg_efficiency) }}</h5>
+                        <small class="text-muted">Avg km/L</small>
+                    </div>
+                    <div class="col-4">
+                        <h5 class="text-warning mb-0">₹{{ "{:.0f}".format(total_fuel_cost|float) }}</h5>
+                        <small class="text-muted">Total Cost</small>
+                    </div>
+                </div>
+                
+                {% if last_fuel %}
+                <hr>
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <small class="text-muted">Last Fuel Entry</small>
+                        <br>
+                        <strong>{{ last_fuel.fueling_date.strftime('%d %b %Y') }}</strong>
+                        <br>
+                        <small>{{ "%.2f".format(last_fuel.fuel_liters) }} L @ ₹{{ "%.2f".format(last_fuel.fuel_price_per_liter or 0) }}/L</small>
+                    </div>
+                    <div class="text-end">
+                        <small class="text-muted">Cost</small>
+                        <br>
+                        <strong>₹{{ "%.2f".format(last_fuel.total_cost|float) }}</strong>
+                        {% if last_fuel.efficiency_km_per_liter %}
+                        <br>
+                        <span class="badge bg-success">{{ "%.1f".format(last_fuel.efficiency_km_per_liter|float) }} km/L</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+                
+                <div class="mt-3">
+                    <a href="{{ url_for('create_vehicle_fuel_log', id=vehicle.id) }}" class="btn btn-sm btn-outline-success w-100">
+                        <i class="bi bi-plus-lg"></i> Add New Fuel Entry
+                    </a>
+                </div>
+                {% else %}
+                <div class="text-center py-3 text-muted">
+                    <i class="bi bi-fuel-pump fs-1 d-block mb-2"></i>
+                    No fuel entries yet.
+                    <br>
+                    <a href="{{ url_for('create_vehicle_fuel_log', id=vehicle.id) }}" class="btn btn-sm btn-primary mt-2">
+                        <i class="bi bi-plus-lg"></i> Add First Fuel Entry
+                    </a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Column: Documents & Driver -->
+    <div class="col-lg-4">
+        <!-- Assigned Driver -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-person-vcard"></i> Assigned Driver</h5>
+            </div>
+            <div class="card-body">
+                {% if driver %}
+                <div class="d-flex align-items-center mb-3">
+                    <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center" 
+                         style="width: 60px; height: 60px; font-size: 24px;">
+                        {{ driver.first_name[0] }}{{ driver.last_name[0] if driver.last_name else '' }}
+                    </div>
+                    <div class="ms-3">
+                        <h5 class="mb-0">{{ driver.first_name }} {{ driver.last_name or '' }}</h5>
+                        <small class="text-muted">{{ driver.driver_code }}</small>
+                    </div>
+                </div>
+                <table class="table table-borderless table-sm">
+                    <tr>
+                        <td class="text-muted"><i class="bi bi-telephone"></i> Mobile</td>
+                        <td>{{ driver.mobile_number or '-' }}</td>
+                    </tr>
+                    <tr>
+                        <td class="text-muted"><i class="bi bi-card-text"></i> License</td>
+                        <td>{{ driver.license_number or '-' }}</td>
+                    </tr>
+                    <tr>
+                        <td class="text-muted"><i class="bi bi-calendar"></i> License Expiry</td>
+                        <td>
+                            {% if driver.license_expiry_date %}
+                                {% set days = (driver.license_expiry_date - now()).days %}
+                                <span class="{% if days < 0 %}text-danger{% elif days < 30 %}text-warning{% endif %}">
+                                    {{ driver.license_expiry_date.strftime('%d-%b-%Y') }}
+                                </span>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                    </tr>
+                </table>
+                <div class="mt-3">
+                    <a href="{{ url_for('edit_driver', id=driver.id) }}" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-pencil"></i> Edit Driver
+                    </a>
+                    <a href="{{ url_for('edit_vehicle', id=vehicle.id) }}" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-arrow-repeat"></i> Change Driver
+                    </a>
+                </div>
+                {% else %}
+                <div class="text-center py-3 text-muted">
+                    <i class="bi bi-person-x fs-1 d-block mb-2"></i>
+                    No driver assigned
+                    <br>
+                    <a href="{{ url_for('edit_vehicle', id=vehicle.id) }}" class="btn btn-sm btn-primary mt-2">
+                        <i class="bi bi-plus"></i> Assign Driver
+                    </a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Document Status -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-file-check"></i> Documents</h5>
+                {% if has_permission('vehicles', 'edit') %}
+                <a href="{{ url_for('edit_vehicle', id=vehicle.id) }}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-pencil"></i> Update
+                </a>
+                {% endif %}
+            </div>
+            <div class="card-body p-0">
+                <div class="list-group list-group-flush">
+                    {% for key, doc in documents.items() %}
+                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="d-flex align-items-center">
+                                <span class="badge bg-{{ doc.color }} me-2">
+                                    <i class="bi bi-circle-fill" style="font-size: 8px;"></i>
+                                </span>
+                                <strong>{{ doc.name }}</strong>
+                            </div>
+                            <small class="text-muted ms-4">
+                                {% if doc.expiry %}
+                                    Expires: {{ doc.expiry.strftime('%d-%b-%Y') }}
+                                    {% if doc.days is not none %}
+                                        <span class="{% if doc.days < 0 %}text-danger{% elif doc.days <= 14 %}text-warning{% else %}text-success{% endif %}">
+                                            ({{ doc.days }} days)
+                                        </span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="text-muted">No expiry date</span>
+                                {% endif %}
+                            </small>
+                        </div>
+                        {% if doc.attachment %}
+                        <a href="/{{ doc.attachment }}" target="_blank" class="btn btn-sm btn-outline-info">
+                            <i class="bi bi-file-earmark"></i>
+                        </a>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <!-- Document Alerts Widget -->
+        {% set doc_alerts = [] %}
+        {% if vehicle.insurance_expiry and (vehicle.insurance_expiry - now()).days <= 30 %}
+            {% set _ = doc_alerts.append({'doc': 'Insurance', 'days': (vehicle.insurance_expiry - now()).days}) %}
+        {% endif %}
+        {% if vehicle.fitness_expiry and (vehicle.fitness_expiry - now()).days <= 30 %}
+            {% set _ = doc_alerts.append({'doc': 'Fitness', 'days': (vehicle.fitness_expiry - now()).days}) %}
+        {% endif %}
+        {% if vehicle.permit_1_year_expiry and (vehicle.permit_1_year_expiry - now()).days <= 30 %}
+            {% set _ = doc_alerts.append({'doc': 'Permit', 'days': (vehicle.permit_1_year_expiry - now()).days}) %}
+        {% endif %}
+        
+        {% if doc_alerts %}
+        <div class="card mb-4 border-warning">
+            <div class="card-header bg-warning text-dark">
+                <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> Document Alerts</h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="list-group list-group-flush">
+                    {% for alert in doc_alerts %}
+                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>{{ alert.doc }}</span>
+                        <span class="badge bg-{% if alert.days < 0 %}danger{% elif alert.days <= 7 %}warning{% else %}info{% endif %}">
+                            {% if alert.days < 0 %}Expired{% else %}{{ alert.days }} days{% endif %}
+                        </span>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="p-2 text-center">
+                    <a href="{{ url_for('vehicle_documents_alerts') }}" class="btn btn-sm btn-outline-warning">View All Alerts</a>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Quick Stats -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-speedometer2"></i> Quick Stats</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="{{ url_for('vehicle_utilization', id=vehicle.id) }}" class="btn btn-outline-primary">
+                        <i class="bi bi-graph-up"></i> View Utilization
+                    </a>
+                    <a href="{{ url_for('vehicle_assignments', id=vehicle.id) }}" class="btn btn-outline-success">
+                        <i class="bi bi-person-check"></i> Driver Assignments
+                    </a>
+                    <a href="{{ url_for('vehicle_documents_alerts') }}" class="btn btn-outline-warning">
+                        <i class="bi bi-exclamation-triangle"></i> Document Alerts
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-lightning"></i> Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="{{ url_for('create_transport_bill') }}" class="btn btn-outline-primary">
+                        <i class="bi bi-plus-lg"></i> Create New Bilty
+                    </a>
+                    <a href="{{ url_for('expenses') }}" class="btn btn-outline-success">
+                        <i class="bi bi-wallet2"></i> Add Expense
+                    </a>
+                    <a href="{{ url_for('dispatch_trips') }}" class="btn btn-outline-info">
+                        <i class="bi bi-truck-front"></i> View Trips
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

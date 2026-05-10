@@ -1,0 +1,131 @@
+{% extends 'base.html' %}
+
+{% block title %}POD Dashboard - Transport Management System{% endblock %}
+
+{% block content %}
+<div class="navbar-top">
+    <h4 class="mb-0"><i class="bi bi-speedometer2"></i> POD Dashboard</h4>
+</div>
+
+<!-- KPI Cards -->
+<div class="row mb-4">
+    {% for status in status_counts %}
+    <div class="col-md-2">
+        <div class="card text-white" style="background-color: {{ status.color_code }};">
+            <div class="card-body">
+                <h5 class="card-title">{{ status.status_name }}</h5>
+                <h3 class="card-text">{{ status.count }}</h3>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Aging Analysis -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="bi bi-clock-history"></i> POD Aging Analysis</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="agingChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="bi bi-activity"></i> POD Status Distribution</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="statusChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Updates -->
+<div class="card">
+    <div class="card-header">
+        <h5><i class="bi bi-clock"></i> Recent POD Updates</h5>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Bill Name</th>
+                        <th>GR Number</th>
+                        <th>Status</th>
+                        <th>Updated By</th>
+                        <th>Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for update in recent_updates %}
+                    <tr>
+                        <td>{{ update.transport_bill.name }}</td>
+                        <td>{{ update.transport_bill.gr_number or '-' }}</td>
+                        <td><span class="badge" style="background-color: {{ update.status.color_code }};">{{ update.status.status_name }}</span></td>
+                        <td>{{ update.updated_by_user.name if update.updated_by_user else '-' }}</td>
+                        <td>{{ update.timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+// Prepare data for charts
+const agingLabels = [{% for aging in aging_data %}'{{ aging.aging_bucket }}'{% if not loop.last %},{% endif %}{% endfor %}];
+const agingData = [{% for aging in aging_data %}{{ aging.count }}{% if not loop.last %},{% endif %}{% endfor %}];
+
+const statusLabels = [{% for status in status_counts %}'{{ status.status_name }}'{% if not loop.last %},{% endif %}{% endfor %}];
+const statusData = [{% for status in status_counts %}{{ status.count }}{% if not loop.last %},{% endif %}{% endfor %}];
+const statusColors = [{% for status in status_counts %}'{{ status.color_code }}'{% if not loop.last %},{% endif %}{% endfor %}];
+
+// Aging Chart
+const agingCtx = document.getElementById('agingChart').getContext('2d');
+new Chart(agingCtx, {
+    type: 'bar',
+    data: {
+        labels: agingLabels,
+        datasets: [{
+            label: 'POD Count',
+            data: agingData,
+            backgroundColor: '#007bff'
+        }]
+    },
+    options: {
+        responsive: true,
+        scales: {
+            y: {
+                beginAtZero: true
+            }
+        }
+    }
+});
+
+// Status Chart
+const statusCtx = document.getElementById('statusChart').getContext('2d');
+new Chart(statusCtx, {
+    type: 'doughnut',
+    data: {
+        labels: statusLabels,
+        datasets: [{
+            data: statusData,
+            backgroundColor: statusColors
+        }]
+    },
+    options: {
+        responsive: true
+    }
+});
+</script>
+{% endblock %}

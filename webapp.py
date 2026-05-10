@@ -20,17 +20,22 @@ from flask import (
 )
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from werkzeug.utils import secure_filename
 
 from models import (
     AccountingExport,
     AccountingIntegration,
     AuditLog,
+    CustomerCategory,
+    CustomerCommunication,
+    CustomerCredit,
+    CustomerDocument,
+    CustomerFeedback,
+    CustomerNotification,
     CustomerPortalAccount,
-    GPSDevice,
-    GPSPing,
-    MODULE_DEFINITIONS,
+    CustomerTransaction,
+    CustomerAnalytics,
     DeliveryType,
     DispatchTrip,
     Driver,
@@ -48,6 +53,10 @@ from models import (
     User,
     UserAmendmentRequest,
     Vehicle,
+    VehicleDriverAssignment,
+    VehicleFuelLog,
+    VehicleServiceLog,
+    VehicleServiceSchedule,
     Vendor,
     VendorAddress,
     VendorUser,
@@ -135,6 +144,17 @@ def save_uploaded_file(file, subfolder='', prefix=''):
         rel_path = os.path.join('uploads', 'drivers', subfolder, filename) if subfolder else os.path.join('uploads', 'drivers', filename)
         return rel_path.replace('\\', '/')
     return None
+
+
+@app.template_filter('from_json')
+def from_json(value):
+    """Parse JSON string to Python object"""
+    if not value:
+        return []
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return []
 
 
 def export_to_excel(data, headers, filename, dropdowns=None):
@@ -2749,6 +2769,1413 @@ def delete_vehicle(id):
         db.session.rollback()
         flash("Cannot delete: vehicle has associated records.", "error")
     return redirect(url_for("vehicles"))
+
+
+@app.route("/vehicles/<int:id>/dashboard")
+@permission_required("vehicles", "view")
+def vehicle_dashboard(id):
+    """Comprehensive vehicle dashboard showing all information, metrics, and status."""
+    from datetime import date, timedelta
+    
+    vehicle = get_scoped_record(Vehicle, id)
+    
+    # Get assigned driver
+    driver = None
+    if vehicle.driver_id:
+        driver = Driver.query.get(vehicle.driver_id)
+    
+    # Trip statistics
+    trip_count = DispatchTrip.query.filter_by(vehicle_id=id).count()
+    recent_trips = DispatchTrip.query.filter_by(vehicle_id=id).order_by(
+        DispatchTrip.trip_date.desc()
+    ).limit(5).all()
+    
+    # Revenue calculation
+    total_revenue = db.session.query(func.sum(TransportBill.rate)).join(
+        DispatchTrip, DispatchTrip.bilty_id == TransportBill.id
+    ).filter(DispatchTrip.vehicle_id == id).scalar() or 0
+    
+    # Expenses
+    total_expenses = db.session.query(func.sum(Expense.amount)).filter(
+        Expense.vehicle_id == id
+    ).scalar() or 0
+    
+    # Calculate document expiry status
+    def get_expiry_status(expiry_date):
+        if not expiry_date:
+            return {'status': 'unknown', 'days': None, 'color': 'secondary'}
+        today = date.today()
+        days = (expiry_date - today).days
+        if days < 0:
+            return {'status': 'expired', 'days': days, 'color': 'danger'}
+        elif days <= 7:
+            return {'status': 'critical', 'days': days, 'color': 'danger'}
+        elif days <= 14:
+            return {'status': 'warning', 'days': days, 'color': 'warning'}
+        elif days <= 30:
+            return {'status': 'expiring', 'days': days, 'color': 'info'}
+        else:
+            return {'status': 'valid', 'days': days, 'color': 'success'}
+    
+    documents = {
+        'insurance': {
+            'name': 'Insurance',
+            'expiry': vehicle.insurance_expiry,
+            'attachment': vehicle.insurance_attachment_path,
+            **get_expiry_status(vehicle.insurance_expiry)
+        },
+        'fitness': {
+            'name': 'Fitness Certificate',
+            'expiry': vehicle.fitness_expiry,
+            'attachment': vehicle.fitness_certificate_path,
+            **get_expiry_status(vehicle.fitness_expiry)
+        },
+        'permit_1': {
+            'name': 'Permit (1 Year)',
+            'expiry': vehicle.permit_1_year_expiry,
+            'attachment': vehicle.permit_1_year_attachment_path,
+            **get_expiry_status(vehicle.permit_1_year_expiry)
+        },
+        'permit_5': {
+            'name': 'Permit (5 Year)',
+            'expiry': vehicle.permit_5_year_expiry,
+            'attachment': vehicle.permit_5_year_attachment_path,
+            **get_expiry_status(vehicle.permit_5_year_expiry)
+        },
+        'road_tax': {
+            'name': 'Road Tax',
+            'expiry': vehicle.road_tax_expiry,
+            'attachment': vehicle.road_tax_attachment_path,
+            **get_expiry_status(vehicle.road_tax_expiry)
+        },
+        'puc': {
+            'name': 'PUC',
+            'expiry': vehicle.puc_expiry,
+            'attachment': vehicle.puc_attachment_path,
+            **get_expiry_status(vehicle.puc_expiry)
+        }
+    }
+    
+    # Calculate vehicle age
+    age_text = ""
+    if vehicle.purchase_date:
+        years = (date.today() - vehicle.purchase_date).days // 365
+        if years < 1:
+            months = (date.today() - vehicle.purchase_date).days // 30
+            age_text = f"{months} months"
+        else:
+            age_text = f"{years} years"
+    
+    context = {
+        'vehicle': vehicle,
+        'driver': driver,
+        'trip_count': trip_count,
+        'recent_trips': recent_trips,
+        'total_revenue': total_revenue,
+        'total_expenses': total_expenses,
+        'net_profit': total_revenue - total_expenses,
+        'documents': documents,
+        'age_text': age_text,
+        'show_tenant_column': is_superadmin(),
+        'now': date.today
+    }
+    return render_template("vehicles/dashboard.html", **context)
+
+
+@app.route("/vehicles/<int:id>/trips")
+@permission_required("vehicles", "view")
+def vehicle_trips(id):
+    """Trip history and revenue tracking for a specific vehicle."""
+    from datetime import date, timedelta
+    
+    vehicle = get_scoped_record(Vehicle, id)
+    
+    # Get filter parameters
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    status_filter = request.args.getlist('status')
+    party_search = request.args.get('party', '').strip()
+    route_search = request.args.get('route', '').strip()
+    min_amount = request.args.get('min_amount', '')
+    max_amount = request.args.get('max_amount', '')
+    
+    # Base query - join DispatchTrip with TransportBill
+    query = db.session.query(
+        DispatchTrip,
+        TransportBill
+    ).join(
+        TransportBill, DispatchTrip.bilty_id == TransportBill.id
+    ).filter(
+        DispatchTrip.vehicle_id == id
+    )
+    
+    # Apply filters
+    if date_from:
+        try:
+            from_date = datetime.strptime(date_from, '%Y-%m-%d').date()
+            query = query.filter(DispatchTrip.trip_date >= from_date)
+        except ValueError:
+            pass
+    
+    if date_to:
+        try:
+            to_date = datetime.strptime(date_to, '%Y-%m-%d').date()
+            query = query.filter(DispatchTrip.trip_date <= to_date)
+        except ValueError:
+            pass
+    
+    if status_filter:
+        query = query.filter(DispatchTrip.status.in_(status_filter))
+    
+    if party_search:
+        query = query.filter(TransportBill.party_information.ilike(f'%{party_search}%'))
+    
+    if route_search:
+        query = query.filter(
+            or_(
+                DispatchTrip.origin.ilike(f'%{route_search}%'),
+                DispatchTrip.destination.ilike(f'%{route_search}%')
+            )
+        )
+    
+    if min_amount:
+        try:
+            query = query.filter(TransportBill.rate >= float(min_amount))
+        except ValueError:
+            pass
+    
+    if max_amount:
+        try:
+            query = query.filter(TransportBill.rate <= float(max_amount))
+        except ValueError:
+            pass
+    
+    # Order by date descending
+    query = query.order_by(DispatchTrip.trip_date.desc())
+    
+    # Get all trips for the list
+    trips = query.all()
+    
+    # Calculate summary statistics
+    total_trips = len(trips)
+    total_revenue = sum(float(t[1].rate or 0) for t in trips)
+    avg_revenue = total_revenue / total_trips if total_trips > 0 else 0
+    
+    # Status counts
+    status_counts = {}
+    for trip, bill in trips:
+        status = trip.status or 'Unknown'
+        status_counts[status] = status_counts.get(status, 0) + 1
+    
+    context = {
+        'vehicle': vehicle,
+        'trips': trips,
+        'total_trips': total_trips,
+        'total_revenue': total_revenue,
+        'avg_revenue': avg_revenue,
+        'status_counts': status_counts,
+        'filters': {
+            'date_from': date_from,
+            'date_to': date_to,
+            'status': status_filter,
+            'party': party_search,
+            'route': route_search,
+            'min_amount': min_amount,
+            'max_amount': max_amount
+        },
+        'show_tenant_column': is_superadmin()
+    }
+    return render_template("vehicles/trips.html", **context)
+
+
+@app.route("/vehicles/<int:id>/expenses")
+@permission_required("vehicles", "view")
+def vehicle_expenses(id):
+    """Expense tracking and categorization for a specific vehicle."""
+    from datetime import date, timedelta
+    
+    vehicle = get_scoped_record(Vehicle, id)
+    
+    # Get filter parameters
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    category_filter = request.args.getlist('category')
+    vendor_search = request.args.get('vendor', '').strip()
+    min_amount = request.args.get('min_amount', '')
+    max_amount = request.args.get('max_amount', '')
+    
+    # Base query
+    query = Expense.query.filter_by(vehicle_id=id)
+    
+    # Apply filters
+    if date_from:
+        try:
+            from_date = datetime.strptime(date_from, '%Y-%m-%d').date()
+            query = query.filter(Expense.expense_date >= from_date)
+        except ValueError:
+            pass
+    
+    if date_to:
+        try:
+            to_date = datetime.strptime(date_to, '%Y-%m-%d').date()
+            query = query.filter(Expense.expense_date <= to_date)
+        except ValueError:
+            pass
+    
+    if category_filter:
+        query = query.filter(Expense.category.in_(category_filter))
+    
+    if vendor_search:
+        query = query.filter(Expense.vendor_name.ilike(f'%{vendor_search}%'))
+    
+    if min_amount:
+        try:
+            query = query.filter(Expense.amount >= float(min_amount))
+        except ValueError:
+            pass
+    
+    if max_amount:
+        try:
+            query = query.filter(Expense.amount <= float(max_amount))
+        except ValueError:
+            pass
+    
+    # Order by date descending
+    query = query.order_by(Expense.expense_date.desc())
+    
+    # Get all expenses
+    expenses = query.all()
+    
+    # Calculate summary statistics
+    total_expenses = sum(float(e.amount or 0) for e in expenses)
+    
+    # Category breakdown
+    category_totals = {}
+    for expense in expenses:
+        cat = expense.category or 'Other'
+        category_totals[cat] = category_totals.get(cat, 0) + float(expense.amount or 0)
+    
+    # Find highest expense category
+    highest_category = max(category_totals, key=category_totals.get) if category_totals else None
+    
+    # Recent 30 days expenses
+    thirty_days_ago = date.today() - timedelta(days=30)
+    recent_expenses = sum(
+        float(e.amount or 0) 
+        for e in expenses 
+        if e.expense_date and e.expense_date >= thirty_days_ago
+    )
+    
+    # Monthly average (if date range spans multiple months)
+    avg_per_month = 0
+    if expenses:
+        dates = [e.expense_date for e in expenses if e.expense_date]
+        if dates:
+            min_date = min(dates)
+            max_date = max(dates)
+            months = max(1, (max_date.year - min_date.year) * 12 + (max_date.month - min_date.month) + 1)
+            avg_per_month = total_expenses / months
+    
+    context = {
+        'vehicle': vehicle,
+        'expenses': expenses,
+        'total_expenses': total_expenses,
+        'category_totals': category_totals,
+        'highest_category': highest_category,
+        'recent_30_days': recent_expenses,
+        'avg_per_month': avg_per_month,
+        'filters': {
+            'date_from': date_from,
+            'date_to': date_to,
+            'category': category_filter,
+            'vendor': vendor_search,
+            'min_amount': min_amount,
+            'max_amount': max_amount
+        },
+        'categories': ['Fuel', 'Maintenance', 'Repairs', 'Tires', 'Insurance', 'Tax', 'Accessories', 'Other'],
+        'show_tenant_column': is_superadmin()
+    }
+    return render_template("vehicles/expenses.html", **context)
+
+
+@app.route("/vehicles/<int:id>/profitability")
+@permission_required("vehicles", "view")
+def vehicle_profitability(id):
+    """Profitability analysis and P&L statement for a specific vehicle."""
+    from datetime import date, timedelta
+    
+    vehicle = get_scoped_record(Vehicle, id)
+    
+    # Get period selection
+    period = request.args.get('period', 'lifetime')  # lifetime, 3m, 6m, 1y, custom
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    
+    # Calculate date range
+    today = date.today()
+    if period == '3m':
+        start_date = today - timedelta(days=90)
+        end_date = today
+    elif period == '6m':
+        start_date = today - timedelta(days=180)
+        end_date = today
+    elif period == '1y':
+        start_date = today - timedelta(days=365)
+        end_date = today
+    elif period == 'custom' and date_from and date_to:
+        try:
+            start_date = datetime.strptime(date_from, '%Y-%m-%d').date()
+            end_date = datetime.strptime(date_to, '%Y-%m-%d').date()
+        except ValueError:
+            start_date = None
+            end_date = None
+    else:
+        start_date = None
+        end_date = None
+    
+    # Base queries with date filters
+    trip_query = DispatchTrip.query.filter_by(vehicle_id=id)
+    expense_query = Expense.query.filter_by(vehicle_id=id)
+    
+    if start_date and end_date:
+        trip_query = trip_query.filter(DispatchTrip.trip_date.between(start_date, end_date))
+        expense_query = expense_query.filter(Expense.expense_date.between(start_date, end_date))
+    
+    # Get trips with revenue
+    trips = trip_query.all()
+    trip_ids = [t.bilty_id for t in trips if t.bilty_id]
+    
+    # Calculate revenue
+    total_revenue = db.session.query(func.sum(TransportBill.rate)).filter(
+        TransportBill.id.in_(trip_ids) if trip_ids else False
+    ).scalar() or 0
+    
+    # Calculate expenses by category
+    expenses = expense_query.all()
+    total_expenses = sum(float(e.amount or 0) for e in expenses)
+    
+    # Category breakdown
+    category_totals = {}
+    for expense in expenses:
+        cat = expense.category or 'Other'
+        category_totals[cat] = category_totals.get(cat, 0) + float(expense.amount or 0)
+    
+    # Net profit/loss
+    net_profit = float(total_revenue) - total_expenses
+    profit_margin = (net_profit / float(total_revenue) * 100) if total_revenue > 0 else 0
+    
+    # Monthly breakdown for chart (last 12 months)
+    monthly_data = []
+    for i in range(11, -1, -1):
+        month_date = today - timedelta(days=30*i)
+        month_start = month_date.replace(day=1)
+        month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        
+        # Revenue for month
+        month_trips = DispatchTrip.query.filter_by(vehicle_id=id).filter(
+            DispatchTrip.trip_date.between(month_start, month_end)
+        ).all()
+        month_trip_ids = [t.bilty_id for t in month_trips if t.bilty_id]
+        month_revenue = db.session.query(func.sum(TransportBill.rate)).filter(
+            TransportBill.id.in_(month_trip_ids) if month_trip_ids else False
+        ).scalar() or 0
+        
+        # Expenses for month
+        month_expenses = db.session.query(func.sum(Expense.amount)).filter(
+            Expense.vehicle_id == id,
+            Expense.expense_date.between(month_start, month_end)
+        ).scalar() or 0
+        
+        month_profit = float(month_revenue) - float(month_expenses)
+        
+        monthly_data.append({
+            'month': month_start.strftime('%b %Y'),
+            'revenue': float(month_revenue),
+            'expenses': float(month_expenses),
+            'profit': month_profit
+        })
+    
+    # Profitability status
+    if profit_margin >= 20:
+        profit_status = 'excellent'
+        profit_color = 'success'
+    elif profit_margin >= 10:
+        profit_status = 'good'
+        profit_color = 'info'
+    elif profit_margin >= 0:
+        profit_status = 'break_even'
+        profit_color = 'warning'
+    else:
+        profit_status = 'loss'
+        profit_color = 'danger'
+    
+    context = {
+        'vehicle': vehicle,
+        'total_revenue': total_revenue,
+        'total_expenses': total_expenses,
+        'net_profit': net_profit,
+        'profit_margin': profit_margin,
+        'profit_status': profit_status,
+        'profit_color': profit_color,
+        'category_totals': category_totals,
+        'monthly_data': monthly_data,
+        'trip_count': len(trips),
+        'period': period,
+        'date_from': date_from,
+        'date_to': date_to,
+        'show_tenant_column': is_superadmin()
+    }
+    return render_template("vehicles/profitability.html", **context)
+
+
+@app.route("/vehicles/<int:id>/services")
+@permission_required("vehicles", "view")
+def vehicle_services(id):
+    """Service and maintenance log for a specific vehicle."""
+    from datetime import date, timedelta
+    import json
+    
+    vehicle = get_scoped_record(Vehicle, id)
+    
+    # Get filter parameters
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    service_type_filter = request.args.getlist('service_type')
+    garage_search = request.args.get('garage', '').strip()
+    
+    # Base query
+    query = VehicleServiceLog.query.filter_by(vehicle_id=id)
+    
+    # Apply filters
+    if date_from:
+        try:
+            from_date = datetime.strptime(date_from, '%Y-%m-%d').date()
+            query = query.filter(VehicleServiceLog.service_date >= from_date)
+        except ValueError:
+            pass
+    
+    if date_to:
+        try:
+            to_date = datetime.strptime(date_to, '%Y-%m-%d').date()
+            query = query.filter(VehicleServiceLog.service_date <= to_date)
+        except ValueError:
+            pass
+    
+    if service_type_filter:
+        query = query.filter(VehicleServiceLog.service_type.in_(service_type_filter))
+    
+    if garage_search:
+        query = query.filter(VehicleServiceLog.garage_name.ilike(f'%{garage_search}%'))
+    
+    # Order by date descending
+    query = query.order_by(VehicleServiceLog.service_date.desc())
+    
+    # Get all services
+    services = query.all()
+    
+    # Calculate summary statistics
+    total_services = len(services)
+    total_cost = sum(float(s.total_cost or 0) for s in services)
+    avg_cost = total_cost / total_services if total_services > 0 else 0
+    
+    # Service type breakdown
+    type_totals = {}
+    for service in services:
+        stype = service.service_type or 'Other'
+        type_totals[stype] = type_totals.get(stype, 0) + float(service.total_cost or 0)
+    
+    # Last service info
+    last_service = services[0] if services else None
+    
+    # Next service due
+    next_service_due = None
+    if last_service and last_service.next_service_date:
+        days_until = (last_service.next_service_date - date.today()).days
+        next_service_due = {
+            'date': last_service.next_service_date,
+            'days_until': days_until,
+            'km': last_service.next_service_km,
+            'is_overdue': days_until < 0,
+            'is_soon': 0 <= days_until <= 7
+        }
+    
+    # Services this year
+    this_year_start = date.today().replace(month=1, day=1)
+    services_this_year = sum(1 for s in services if s.service_date and s.service_date >= this_year_start)
+    cost_this_year = sum(float(s.total_cost or 0) for s in services if s.service_date and s.service_date >= this_year_start)
+    
+    context = {
+        'vehicle': vehicle,
+        'services': services,
+        'total_services': total_services,
+        'total_cost': total_cost,
+        'avg_cost': avg_cost,
+        'type_totals': type_totals,
+        'last_service': last_service,
+        'next_service_due': next_service_due,
+        'services_this_year': services_this_year,
+        'cost_this_year': cost_this_year,
+        'filters': {
+            'date_from': date_from,
+            'date_to': date_to,
+            'service_type': service_type_filter,
+            'garage': garage_search
+        },
+        'service_types': [
+            'Oil Change', 'Filter Replacement', 'Tire Service', 'Brake Service',
+            'Battery Service', 'AC Service', 'General Service', 'Repair', 'Inspection'
+        ],
+        'show_tenant_column': is_superadmin()
+    }
+    return render_template("vehicles/services.html", **context)
+
+
+@app.route("/vehicles/<int:id>/services/create", methods=["GET", "POST"])
+@permission_required("vehicles", "create")
+def create_vehicle_service(id):
+    """Create a new service log entry for a vehicle."""
+    import json
+    vehicle = get_scoped_record(Vehicle, id)
+    
+    if request.method == "POST":
+        try:
+            service_log = VehicleServiceLog(
+                tenant_id=vehicle.tenant_id,
+                vehicle_id=id,
+                service_date=parse_date(request.form.get("service_date")),
+                service_type=request.form.get("service_type", "").strip() or "Other",
+                service_description=request.form.get("service_description", "").strip() or None,
+                odometer_reading=int(request.form.get("odometer_reading", 0)) if request.form.get("odometer_reading") else None,
+                garage_name=request.form.get("garage_name", "").strip() or None,
+                garage_contact=request.form.get("garage_contact", "").strip() or None,
+                garage_address=request.form.get("garage_address", "").strip() or None,
+                labor_cost=float(request.form.get("labor_cost", 0)) if request.form.get("labor_cost") else 0,
+                parts_cost=float(request.form.get("parts_cost", 0)) if request.form.get("parts_cost") else 0,
+                total_cost=float(request.form.get("total_cost", 0)) if request.form.get("total_cost") else 0,
+                invoice_number=request.form.get("invoice_number", "").strip() or None,
+                next_service_date=parse_date(request.form.get("next_service_date")),
+                next_service_km=int(request.form.get("next_service_km", 0)) if request.form.get("next_service_km") else None,
+                notes=request.form.get("notes", "").strip() or None,
+                created_by=g.current_user.id if g.current_user else None
+            )
+            
+            # Handle parts replaced as JSON
+            parts_list = []
+            part_names = request.form.getlist("part_name[]")
+            part_costs = request.form.getlist("part_cost[]")
+            for i, name in enumerate(part_names):
+                if name.strip():
+                    parts_list.append({
+                        "part": name.strip(),
+                        "cost": float(part_costs[i]) if i < len(part_costs) and part_costs[i] else 0
+                    })
+            if parts_list:
+                service_log.parts_replaced = json.dumps(parts_list)
+            
+            # Handle file upload for invoice
+            if "invoice_file" in request.files:
+                file = request.files["invoice_file"]
+                if file and file.filename:
+                    service_log.invoice_path = save_uploaded_file(file, "service_invoices")
+            
+            db.session.add(service_log)
+            db.session.commit()
+            
+            flash("Service log entry created successfully.", "success")
+            return redirect(url_for("vehicle_services", id=id))
+            
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Error creating service log: {str(e)}", "error")
+    
+    context = {
+        'vehicle': vehicle,
+        'service_types': [
+            'Oil Change', 'Filter Replacement', 'Tire Service', 'Brake Service',
+            'Battery Service', 'AC Service', 'General Service', 'Repair', 'Inspection'
+        ],
+        'today': date.today().isoformat()
+    }
+    return render_template("vehicles/service_form.html", **context)
+
+
+@app.route("/vehicles/<int:vehicle_id>/services/<int:service_id>/edit", methods=["GET", "POST"])
+@permission_required("vehicles", "edit")
+def edit_vehicle_service(vehicle_id, service_id):
+    """Edit a service log entry."""
+    import json
+    vehicle = get_scoped_record(Vehicle, vehicle_id)
+    service_log = VehicleServiceLog.query.filter_by(id=service_id, vehicle_id=vehicle_id).first_or_404()
+    
+    if request.method == "POST":
+        try:
+            service_log.service_date = parse_date(request.form.get("service_date"))
+            service_log.service_type = request.form.get("service_type", "").strip() or "Other"
+            service_log.service_description = request.form.get("service_description", "").strip() or None
+            service_log.odometer_reading = int(request.form.get("odometer_reading", 0)) if request.form.get("odometer_reading") else None
+            service_log.garage_name = request.form.get("garage_name", "").strip() or None
+            service_log.garage_contact = request.form.get("garage_contact", "").strip() or None
+            service_log.garage_address = request.form.get("garage_address", "").strip() or None
+            service_log.labor_cost = float(request.form.get("labor_cost", 0)) if request.form.get("labor_cost") else 0
+            service_log.parts_cost = float(request.form.get("parts_cost", 0)) if request.form.get("parts_cost") else 0
+            service_log.total_cost = float(request.form.get("total_cost", 0)) if request.form.get("total_cost") else 0
+            service_log.invoice_number = request.form.get("invoice_number", "").strip() or None
+            service_log.next_service_date = parse_date(request.form.get("next_service_date"))
+            service_log.next_service_km = int(request.form.get("next_service_km", 0)) if request.form.get("next_service_km") else None
+            service_log.notes = request.form.get("notes", "").strip() or None
+            
+            # Handle parts replaced as JSON
+            parts_list = []
+            part_names = request.form.getlist("part_name[]")
+            part_costs = request.form.getlist("part_cost[]")
+            for i, name in enumerate(part_names):
+                if name.strip():
+                    parts_list.append({
+                        "part": name.strip(),
+                        "cost": float(part_costs[i]) if i < len(part_costs) and part_costs[i] else 0
+                    })
+            service_log.parts_replaced = json.dumps(parts_list) if parts_list else None
+            
+            # Handle file upload for invoice
+            if "invoice_file" in request.files:
+                file = request.files["invoice_file"]
+                if file and file.filename:
+                    service_log.invoice_path = save_uploaded_file(file, "service_invoices")
+            
+            db.session.commit()
+            
+            flash("Service log entry updated successfully.", "success")
+            return redirect(url_for("vehicle_services", id=vehicle_id))
+            
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Error updating service log: {str(e)}", "error")
+    
+    # Parse parts for display in form
+    parts_list = []
+    if service_log.parts_replaced:
+        try:
+            parts_list = json.loads(service_log.parts_replaced)
+        except:
+            pass
+    
+    context = {
+        'vehicle': vehicle,
+        'service': service_log,
+        'parts_list': parts_list,
+        'service_types': [
+            'Oil Change', 'Filter Replacement', 'Tire Service', 'Brake Service',
+            'Battery Service', 'AC Service', 'General Service', 'Repair', 'Inspection'
+        ],
+        'edit': True
+    }
+    return render_template("vehicles/service_form.html", **context)
+
+
+@app.route("/vehicles/<int:vehicle_id>/services/<int:service_id>/delete", methods=["POST"])
+@permission_required("vehicles", "delete")
+def delete_vehicle_service(vehicle_id, service_id):
+    """Delete a service log entry."""
+    service_log = VehicleServiceLog.query.filter_by(id=service_id, vehicle_id=vehicle_id).first_or_404()
+    
+    try:
+        db.session.delete(service_log)
+        db.session.commit()
+        flash("Service log entry deleted successfully.", "success")
+    except Exception as e:
+        db.session.rollback()
+        flash(f"Error deleting service log: {str(e)}", "error")
+    
+    return redirect(url_for("vehicle_services", id=vehicle_id))
+
+
+@app.route("/vehicles/<int:id>/fuel-log")
+@permission_required("vehicles", "view")
+def vehicle_fuel_log(id):
+    """Display fuel log with efficiency calculations for a vehicle."""
+    vehicle = Vehicle.query.get_or_404(id)
+    
+    # Filters
+    from_date = request.args.get("from_date")
+    to_date = request.args.get("to_date")
+    fuel_type = request.args.get("fuel_type", "")
+    fuel_station = request.args.get("fuel_station", "")
+    
+    # Base query
+    query = VehicleFuelLog.query.filter_by(vehicle_id=id)
+    
+    if from_date:
+        query = query.filter(VehicleFuelLog.fueling_date >= from_date)
+    if to_date:
+        query = query.filter(VehicleFuelLog.fueling_date <= to_date)
+    if fuel_type:
+        query = query.filter(VehicleFuelLog.fuel_type == fuel_type)
+    if fuel_station:
+        query = query.filter(VehicleFuelLog.fuel_station.ilike(f"%{fuel_station}%"))
+    
+    # Order by date desc
+    fuel_logs = query.order_by(VehicleFuelLog.fueling_date.desc()).all()
+    
+    # Calculate summary statistics
+    total_liters = sum(float(log.fuel_liters or 0) for log in fuel_logs)
+    total_cost = sum(float(log.total_cost or 0) for log in fuel_logs)
+    
+    # Efficiency stats
+    efficiencies = [float(log.efficiency_km_per_liter or 0) for log in fuel_logs if log.efficiency_km_per_liter]
+    avg_efficiency = sum(efficiencies) / len(efficiencies) if efficiencies else 0
+    best_efficiency = max(efficiencies) if efficiencies else 0
+    worst_efficiency = min(efficiencies) if efficiencies else 0
+    
+    # Cost per km stats
+    costs_per_km = [float(log.cost_per_km or 0) for log in fuel_logs if log.cost_per_km]
+    avg_cost_per_km = sum(costs_per_km) / len(costs_per_km) if costs_per_km else 0
+    
+    # This month's stats
+    today = date.today()
+    month_start = today.replace(day=1)
+    month_logs = [log for log in fuel_logs if log.fueling_date >= month_start]
+    month_liters = sum(float(log.fuel_liters or 0) for log in month_logs)
+    month_cost = sum(float(log.total_cost or 0) for log in month_logs)
+    
+    # Unique fuel types and stations for filters
+    fuel_types = db.session.query(VehicleFuelLog.fuel_type).filter_by(vehicle_id=id).distinct().all()
+    fuel_types = [ft[0] for ft in fuel_types if ft[0]]
+    
+    fuel_stations = db.session.query(VehicleFuelLog.fuel_station).filter_by(vehicle_id=id).distinct().all()
+    fuel_stations = [fs[0] for fs in fuel_stations if fs[0]]
+    
+    context = {
+        "vehicle": vehicle,
+        "fuel_logs": fuel_logs,
+        "total_liters": total_liters,
+        "total_cost": total_cost,
+        "avg_efficiency": avg_efficiency,
+        "best_efficiency": best_efficiency,
+        "worst_efficiency": worst_efficiency,
+        "avg_cost_per_km": avg_cost_per_km,
+        "month_liters": month_liters,
+        "month_cost": month_cost,
+        "fuel_types": fuel_types,
+        "fuel_stations": fuel_stations,
+        "filters": {
+            "from_date": from_date,
+            "to_date": to_date,
+            "fuel_type": fuel_type,
+            "fuel_station": fuel_station,
+        },
+    }
+    return render_template("vehicles/fuel_log.html", **context)
+
+
+@app.route("/vehicles/<int:id>/fuel-log/create", methods=["GET", "POST"])
+@permission_required("vehicles", "create")
+def create_vehicle_fuel_log(id):
+    """Create a new fuel log entry."""
+    vehicle = Vehicle.query.get_or_404(id)
+    drivers = scoped_query(Driver).filter_by(vehicle_id=id).all()
+    
+    if request.method == "POST":
+        fuel_log = VehicleFuelLog(
+            tenant_id=get_current_tenant_id(),
+            vehicle_id=id,
+            fueling_date=request.form.get("fueling_date"),
+            odometer_reading=int(request.form.get("odometer_reading", 0)),
+            fuel_liters=float(request.form.get("fuel_liters", 0)),
+            fuel_price_per_liter=float(request.form.get("fuel_price_per_liter", 0)) if request.form.get("fuel_price_per_liter") else None,
+            total_cost=float(request.form.get("total_cost", 0)),
+            fuel_station=request.form.get("fuel_station"),
+            fuel_type=request.form.get("fuel_type"),
+            driver_id=request.form.get("driver_id") or None,
+            payment_method=request.form.get("payment_method"),
+            receipt_number=request.form.get("receipt_number"),
+            notes=request.form.get("notes"),
+            created_by=session.get("user_id"),
+        )
+        
+        # Handle receipt upload
+        if "receipt_file" in request.files:
+            file = request.files["receipt_file"]
+            if file and file.filename:
+                fuel_log.receipt_path = save_uploaded_file(file, "fuel_receipts", f"fuel_{id}")
+        
+        # Calculate efficiency
+        fuel_log = calculate_fuel_efficiency(fuel_log)
+        
+        db.session.add(fuel_log)
+        db.session.commit()
+        
+        flash("Fuel log entry created successfully.", "success")
+        return redirect(url_for("vehicle_fuel_log", id=id))
+    
+    today = date.today().strftime("%Y-%m-%d")
+    fuel_types = ["Diesel", "Petrol", "CNG", "Electric"]
+    payment_methods = ["Cash", "Card", "Fleet Card", "UPI", "Credit"]
+    
+    return render_template(
+        "vehicles/fuel_form.html",
+        vehicle=vehicle,
+        drivers=drivers,
+        fuel_types=fuel_types,
+        payment_methods=payment_methods,
+        today=today,
+        edit=False,
+    )
+
+
+@app.route("/vehicles/<int:vehicle_id>/fuel-log/<int:log_id>/edit", methods=["GET", "POST"])
+@permission_required("vehicles", "edit")
+def edit_vehicle_fuel_log(vehicle_id, log_id):
+    """Edit a fuel log entry."""
+    vehicle = Vehicle.query.get_or_404(vehicle_id)
+    fuel_log = VehicleFuelLog.query.filter_by(id=log_id, vehicle_id=vehicle_id).first_or_404()
+    drivers = scoped_query(Driver).filter_by(vehicle_id=vehicle_id).all()
+    
+    if request.method == "POST":
+        fuel_log.fueling_date = request.form.get("fueling_date")
+        fuel_log.odometer_reading = int(request.form.get("odometer_reading", 0))
+        fuel_log.fuel_liters = float(request.form.get("fuel_liters", 0))
+        fuel_log.fuel_price_per_liter = float(request.form.get("fuel_price_per_liter", 0)) if request.form.get("fuel_price_per_liter") else None
+        fuel_log.total_cost = float(request.form.get("total_cost", 0))
+        fuel_log.fuel_station = request.form.get("fuel_station")
+        fuel_log.fuel_type = request.form.get("fuel_type")
+        fuel_log.driver_id = request.form.get("driver_id") or None
+        fuel_log.payment_method = request.form.get("payment_method")
+        fuel_log.receipt_number = request.form.get("receipt_number")
+        fuel_log.notes = request.form.get("notes")
+        
+        # Handle receipt upload
+        if "receipt_file" in request.files:
+            file = request.files["receipt_file"]
+            if file and file.filename:
+                fuel_log.receipt_path = save_uploaded_file(file, "fuel_receipts", f"fuel_{vehicle_id}")
+        
+        # Recalculate efficiency
+        fuel_log = calculate_fuel_efficiency(fuel_log)
+        
+        db.session.commit()
+        flash("Fuel log entry updated successfully.", "success")
+        return redirect(url_for("vehicle_fuel_log", id=vehicle_id))
+    
+    fuel_types = ["Diesel", "Petrol", "CNG", "Electric"]
+    payment_methods = ["Cash", "Card", "Fleet Card", "UPI", "Credit"]
+    
+    return render_template(
+        "vehicles/fuel_form.html",
+        vehicle=vehicle,
+        fuel_log=fuel_log,
+        drivers=drivers,
+        fuel_types=fuel_types,
+        payment_methods=payment_methods,
+        edit=True,
+    )
+
+
+@app.route("/vehicles/<int:vehicle_id>/fuel-log/<int:log_id>/delete", methods=["POST"])
+@permission_required("vehicles", "delete")
+def delete_vehicle_fuel_log(vehicle_id, log_id):
+    """Delete a fuel log entry."""
+    fuel_log = VehicleFuelLog.query.filter_by(id=log_id, vehicle_id=vehicle_id).first_or_404()
+    
+    try:
+        db.session.delete(fuel_log)
+        db.session.commit()
+        flash("Fuel log entry deleted successfully.", "success")
+    except Exception as e:
+        db.session.rollback()
+        flash(f"Error deleting fuel log: {str(e)}", "error")
+    
+    return redirect(url_for("vehicle_fuel_log", id=vehicle_id))
+
+
+def calculate_fuel_efficiency(fuel_log):
+    """Calculate fuel efficiency based on previous fuel log entry."""
+    # Get previous fuel log
+    previous = VehicleFuelLog.query.filter(
+        VehicleFuelLog.vehicle_id == fuel_log.vehicle_id,
+        VehicleFuelLog.fueling_date < fuel_log.fueling_date,
+        VehicleFuelLog.id != fuel_log.id
+    ).order_by(VehicleFuelLog.fueling_date.desc()).first()
+    
+    if previous and fuel_log.odometer_reading and previous.odometer_reading:
+        distance = fuel_log.odometer_reading - previous.odometer_reading
+        fuel_log.distance_since_last = distance
+        
+        if fuel_log.fuel_liters and float(fuel_log.fuel_liters) > 0:
+            from decimal import Decimal
+            fuel_log.efficiency_km_per_liter = Decimal(str(distance)) / fuel_log.fuel_liters
+            if distance > 0 and fuel_log.total_cost:
+                fuel_log.cost_per_km = fuel_log.total_cost / Decimal(str(distance))
+    
+    return fuel_log
+
+
+# =============================================================================
+# DOCUMENT EXPIRY ALERTS
+# =============================================================================
+
+def get_document_status(expiry_date):
+    """Calculate document expiry status and message."""
+    if not expiry_date:
+        return 'unknown', 'No date set', 0
+    
+    today = date.today()
+    days_remaining = (expiry_date - today).days
+    
+    if days_remaining < 0:
+        return 'expired', 'Expired {} days ago'.format(abs(days_remaining)), days_remaining
+    elif days_remaining <= 7:
+        return 'critical', '{} days left'.format(days_remaining), days_remaining
+    elif days_remaining <= 14:
+        return 'warning', '{} days left'.format(days_remaining), days_remaining
+    elif days_remaining <= 30:
+        return 'expiring', '{} days left'.format(days_remaining), days_remaining
+    else:
+        return 'valid', '{} days left'.format(days_remaining), days_remaining
+
+
+def get_vehicle_document_alerts(vehicle):
+    """Get all document alerts for a vehicle."""
+    alerts = []
+    
+    docs = [
+        ('Insurance', vehicle.insurance_expiry),
+        ('Fitness Certificate', vehicle.fitness_expiry),
+        ('Permit 1-Year', vehicle.permit_1_year_expiry),
+        ('Permit 5-Year', vehicle.permit_5_year_expiry),
+        ('Road Tax', vehicle.road_tax_expiry),
+        ('PUC', vehicle.puc_expiry),
+    ]
+    
+    for doc_name, expiry in docs:
+        status, message, days = get_document_status(expiry)
+        if status in ['expired', 'critical', 'warning', 'expiring']:
+            alerts.append({
+                'document': doc_name,
+                'status': status,
+                'message': message,
+                'expiry_date': expiry,
+                'days': days
+            })
+    
+    return alerts
+
+
+@app.route("/vehicle-documents/alerts")
+@permission_required("vehicles", "view")
+def vehicle_documents_alerts():
+    """Master dashboard for document expiry alerts across fleet."""
+    # Get filter parameters
+    days_filter = request.args.get("days", "30")
+    doc_type = request.args.get("doc_type", "")
+    
+    try:
+        days_limit = int(days_filter)
+    except ValueError:
+        days_limit = 30
+    
+    vehicles = scoped_query(Vehicle).filter_by(status="Active").all()
+    
+    alert_data = []
+    for vehicle in vehicles:
+        alerts = get_vehicle_document_alerts(vehicle)
+        
+        # Filter by days if specified
+        if days_limit:
+            alerts = [a for a in alerts if a['days'] <= days_limit]
+        
+        if alerts:
+            alert_data.append({
+                'vehicle': vehicle,
+                'alerts': alerts,
+                'critical_count': len([a for a in alerts if a['status'] == 'critical']),
+                'expired_count': len([a for a in alerts if a['status'] == 'expired'])
+            })
+    
+    # Sort by severity (expired first, then critical)
+    alert_data.sort(key=lambda x: (x['expired_count'], x['critical_count']), reverse=True)
+    
+    # Statistics
+    total_expired = sum(len([a for a in d['alerts'] if a['status'] == 'expired']) for d in alert_data)
+    total_critical = sum(len([a for a in d['alerts'] if a['status'] == 'critical']) for d in alert_data)
+    total_warning = sum(len([a for a in d['alerts'] if a['status'] in ['warning', 'expiring']]) for d in alert_data)
+    
+    return render_template(
+        "vehicles/document_alerts.html",
+        alert_data=alert_data,
+        total_expired=total_expired,
+        total_critical=total_critical,
+        total_warning=total_warning,
+        days_filter=days_filter,
+        doc_type=doc_type,
+        vehicles_count=len(alert_data)
+    )
+
+
+@app.route("/vehicles/<int:id>/documents/update-expiry", methods=["POST"])
+@permission_required("vehicles", "edit")
+def update_document_expiry(id):
+    """Update document expiry dates from vehicle dashboard."""
+    vehicle = Vehicle.query.get_or_404(id)
+    
+    # Update expiry dates from form
+    if request.form.get("insurance_expiry"):
+        vehicle.insurance_expiry = datetime.strptime(request.form.get("insurance_expiry"), "%Y-%m-%d").date()
+    if request.form.get("fitness_expiry"):
+        vehicle.fitness_expiry = datetime.strptime(request.form.get("fitness_expiry"), "%Y-%m-%d").date()
+    if request.form.get("permit_1_year_expiry"):
+        vehicle.permit_1_year_expiry = datetime.strptime(request.form.get("permit_1_year_expiry"), "%Y-%m-%d").date()
+    if request.form.get("permit_5_year_expiry"):
+        vehicle.permit_5_year_expiry = datetime.strptime(request.form.get("permit_5_year_expiry"), "%Y-%m-%d").date()
+    if request.form.get("road_tax_expiry"):
+        vehicle.road_tax_expiry = datetime.strptime(request.form.get("road_tax_expiry"), "%Y-%m-%d").date()
+    if request.form.get("puc_expiry"):
+        vehicle.puc_expiry = datetime.strptime(request.form.get("puc_expiry"), "%Y-%m-%d").date()
+    
+    db.session.commit()
+    flash("Document expiry dates updated successfully.", "success")
+    
+    return redirect(url_for("vehicle_dashboard", id=id))
+
+
+# =============================================================================
+# VEHICLE UTILIZATION METRICS
+# =============================================================================
+
+def calculate_vehicle_utilization(vehicle_id, start_date, end_date):
+    """Calculate utilization metrics for a vehicle over a date range."""
+    total_days = (end_date - start_date).days + 1
+    
+    # Get all days with at least one trip
+    from sqlalchemy import func
+    active_dates = db.session.query(
+        func.date(DispatchTrip.trip_date).label('trip_date')
+    ).filter(
+        DispatchTrip.vehicle_id == vehicle_id,
+        DispatchTrip.trip_date.between(start_date, end_date)
+    ).distinct().all()
+    
+    active_days = len(active_dates)
+    idle_days = total_days - active_days
+    utilization_pct = (active_days / total_days * 100) if total_days > 0 else 0
+    
+    # Get trip count
+    total_trips = DispatchTrip.query.filter(
+        DispatchTrip.vehicle_id == vehicle_id,
+        DispatchTrip.trip_date.between(start_date, end_date)
+    ).count()
+    
+    # Calculate revenue from related TransportBills
+    total_revenue = db.session.query(func.sum(TransportBill.rate)).join(
+        DispatchTrip, DispatchTrip.bilty_id == TransportBill.id
+    ).filter(
+        DispatchTrip.vehicle_id == vehicle_id,
+        DispatchTrip.trip_date.between(start_date, end_date)
+    ).scalar() or 0
+    
+    return {
+        'total_days': total_days,
+        'active_days': active_days,
+        'idle_days': idle_days,
+        'utilization_pct': round(utilization_pct, 2),
+        'total_trips': total_trips,
+        'avg_trips_per_active_day': round(total_trips / active_days, 2) if active_days > 0 else 0,
+        'total_revenue': float(total_revenue),
+        'revenue_per_active_day': round(float(total_revenue) / active_days, 2) if active_days > 0 else 0,
+        'revenue_per_day': round(float(total_revenue) / total_days, 2) if total_days > 0 else 0
+    }
+
+
+def get_fleet_average_utilization(start_date, end_date):
+    """Calculate fleet-wide average utilization."""
+    from sqlalchemy import func
+    vehicles = Vehicle.query.filter_by(status='Active').all()
+    utilization_values = []
+    
+    for v in vehicles:
+        util = calculate_vehicle_utilization(v.id, start_date, end_date)
+        utilization_values.append(util['utilization_pct'])
+    
+    return sum(utilization_values) / len(utilization_values) if utilization_values else 0
+
+
+def get_monthly_utilization(vehicle_id, months=6):
+    """Get monthly utilization breakdown for charts."""
+    results = []
+    today = date.today()
+    
+    for i in range(months - 1, -1, -1):
+        month_date = today - timedelta(days=30*i)
+        start = month_date.replace(day=1)
+        # Calculate end of month
+        if start.month == 12:
+            end = start.replace(year=start.year + 1, month=1, day=1) - timedelta(days=1)
+        else:
+            end = start.replace(month=start.month + 1, day=1) - timedelta(days=1)
+        
+        # Don't go beyond today
+        if end > today:
+            end = today
+        
+        util = calculate_vehicle_utilization(vehicle_id, start, end)
+        results.append({
+            'month': start.strftime('%b %Y'),
+            'month_key': start.strftime('%Y-%m'),
+            'utilization_pct': util['utilization_pct'],
+            'active_days': util['active_days'],
+            'idle_days': util['idle_days'],
+            'total_trips': util['total_trips'],
+            'total_revenue': util['total_revenue']
+        })
+    
+    return results
+
+
+@app.route("/vehicles/<int:id>/utilization")
+@permission_required("vehicles", "view")
+def vehicle_utilization(id):
+    """Display vehicle utilization metrics and analytics."""
+    vehicle = Vehicle.query.get_or_404(id)
+    
+    # Period selection
+    period = request.args.get("period", "3m")
+    today = date.today()
+    
+    if period == "1m":
+        start_date = (today - timedelta(days=30)).replace(day=1)
+        period_label = "Last Month"
+    elif period == "3m":
+        start_date = today - timedelta(days=90)
+        period_label = "Last 3 Months"
+    elif period == "6m":
+        start_date = today - timedelta(days=180)
+        period_label = "Last 6 Months"
+    elif period == "1y":
+        start_date = today - timedelta(days=365)
+        period_label = "Last Year"
+    else:
+        start_date = today - timedelta(days=90)
+        period_label = "Last 3 Months"
+    
+    end_date = today
+    
+    # Calculate utilization
+    utilization = calculate_vehicle_utilization(vehicle.id, start_date, end_date)
+    
+    # Fleet average for comparison
+    fleet_avg = get_fleet_average_utilization(start_date, end_date)
+    
+    # Monthly breakdown for charts
+    monthly_data = get_monthly_utilization(vehicle.id, 6)
+    
+    # Underutilization alerts
+    alerts = []
+    if utilization['utilization_pct'] < 50:
+        alerts.append({
+            'type': 'warning',
+            'message': 'Vehicle utilization is below 50%. Consider reassignment or disposal.'
+        })
+    
+    # Check for consecutive idle days (simplified - in real implementation would query trip dates)
+    if utilization['idle_days'] > 7 and utilization['utilization_pct'] < 30:
+        alerts.append({
+            'type': 'info',
+            'message': 'Vehicle has been idle for extended periods. Review deployment strategy.'
+        })
+    
+    return render_template(
+        "vehicles/utilization.html",
+        vehicle=vehicle,
+        utilization=utilization,
+        fleet_avg=round(fleet_avg, 2),
+        monthly_data=monthly_data,
+        period=period,
+        period_label=period_label,
+        alerts=alerts
+    )
+
+
+@app.route("/fleet/utilization-report")
+@permission_required("vehicles", "view")
+def fleet_utilization_report():
+    """Fleet-wide utilization comparison report."""
+    period = request.args.get("period", "3m")
+    today = date.today()
+    
+    if period == "1m":
+        start_date = (today - timedelta(days=30)).replace(day=1)
+    elif period == "6m":
+        start_date = today - timedelta(days=180)
+    elif period == "1y":
+        start_date = today - timedelta(days=365)
+    else:
+        start_date = today - timedelta(days=90)
+    
+    end_date = today
+    
+    vehicles = Vehicle.query.filter_by(status='Active').all()
+    
+    fleet_data = []
+    for vehicle in vehicles:
+        util = calculate_vehicle_utilization(vehicle.id, start_date, end_date)
+        fleet_data.append({
+            'vehicle': vehicle,
+            'utilization': util
+        })
+    
+    # Sort by utilization (highest first)
+    fleet_data.sort(key=lambda x: x['utilization']['utilization_pct'], reverse=True)
+    
+    # Fleet average
+    fleet_avg = get_fleet_average_utilization(start_date, end_date)
+    
+    return render_template(
+        "vehicles/fleet_utilization.html",
+        fleet_data=fleet_data,
+        fleet_avg=round(fleet_avg, 2),
+        period=period,
+        start_date=start_date,
+        end_date=end_date
+    )
+
+
+# =============================================================================
+# VEHICLE ASSIGNMENT HISTORY
+# =============================================================================
+
+@app.route("/vehicles/<int:id>/assignments")
+@permission_required("vehicles", "view")
+def vehicle_assignments(id):
+    """Display vehicle driver assignment history."""
+    vehicle = Vehicle.query.get_or_404(id)
+    
+    # Get all assignments ordered by date (newest first)
+    assignments = VehicleDriverAssignment.query.filter_by(
+        vehicle_id=id
+    ).order_by(VehicleDriverAssignment.assigned_at.desc()).all()
+    
+    # Get current assignment
+    current_assignment = VehicleDriverAssignment.query.filter_by(
+        vehicle_id=id,
+        is_active=True
+    ).first()
+    
+    # Calculate stats for each driver who operated this vehicle
+    driver_stats = []
+    for assignment in assignments:
+        if assignment.driver:
+            # Get trips by this driver in this vehicle during assignment period
+            trip_query = DispatchTrip.query.filter(
+                DispatchTrip.vehicle_id == id,
+                DispatchTrip.driver_id == assignment.driver_id
+            )
+            
+            if assignment.assignment_date:
+                trip_query = trip_query.filter(DispatchTrip.trip_date >= assignment.assignment_date)
+            if assignment.end_date:
+                trip_query = trip_query.filter(DispatchTrip.trip_date <= assignment.end_date)
+            
+            trip_count = trip_query.count()
+            
+            # Calculate revenue
+            from sqlalchemy import func
+            revenue = db.session.query(func.sum(TransportBill.rate)).join(
+                DispatchTrip, DispatchTrip.bilty_id == TransportBill.id
+            ).filter(
+                DispatchTrip.vehicle_id == id,
+                DispatchTrip.driver_id == assignment.driver_id
+            ).scalar() or 0
+            
+            driver_stats.append({
+                'assignment': assignment,
+                'trip_count': trip_count,
+                'revenue': float(revenue)
+            })
+    
+    # Available drivers for reassignment
+    available_drivers = scoped_query(Driver).filter_by(status="Active").all()
+    
+    return render_template(
+        "vehicles/assignments.html",
+        vehicle=vehicle,
+        assignments=assignments,
+        current_assignment=current_assignment,
+        driver_stats=driver_stats,
+        available_drivers=available_drivers
+    )
+
+
+@app.route("/vehicles/<int:id>/assignments/change", methods=["POST"])
+@permission_required("vehicles", "edit")
+def change_vehicle_driver(id):
+    """Change driver assignment for a vehicle."""
+    vehicle = Vehicle.query.get_or_404(id)
+    
+    new_driver_id = request.form.get("driver_id")
+    assignment_notes = request.form.get("assignment_notes", "")
+    end_reason = request.form.get("end_reason", "Driver reassigned")
+    
+    if not new_driver_id:
+        flash("Please select a driver.", "error")
+        return redirect(url_for("vehicle_assignments", id=id))
+    
+    # End current assignment if exists
+    current = VehicleDriverAssignment.query.filter_by(
+        vehicle_id=id,
+        is_active=True
+    ).first()
+    
+    if current:
+        current.is_active = False
+        current.ended_at = datetime.utcnow()
+        current.end_date = date.today()
+        current.end_reason = end_reason
+        current.ended_by = session.get("user_id")
+    
+    # Update vehicle's current driver
+    vehicle.driver_id = new_driver_id
+    
+    # Create new assignment record
+    new_assignment = VehicleDriverAssignment(
+        tenant_id=get_current_tenant_id(),
+        vehicle_id=id,
+        driver_id=new_driver_id,
+        assigned_by=session.get("user_id"),
+        assignment_notes=assignment_notes,
+        is_active=True
+    )
+    
+    db.session.add(new_assignment)
+    db.session.commit()
+    
+    flash("Driver assignment updated successfully.", "success")
+    return redirect(url_for("vehicle_assignments", id=id))
+
+
+@app.route("/vehicles/<int:id>/assignments/remove", methods=["POST"])
+@permission_required("vehicles", "edit")
+def remove_vehicle_driver(id):
+    """Remove driver assignment (unassign vehicle)."""
+    vehicle = Vehicle.query.get_or_404(id)
+    
+    # End current assignment
+    current = VehicleDriverAssignment.query.filter_by(
+        vehicle_id=id,
+        is_active=True
+    ).first()
+    
+    if current:
+        current.is_active = False
+        current.ended_at = datetime.utcnow()
+        current.end_date = date.today()
+        current.end_reason = request.form.get("end_reason", "Vehicle unassigned")
+        current.ended_by = session.get("user_id")
+    
+    # Remove driver from vehicle
+    vehicle.driver_id = None
+    
+    db.session.commit()
+    flash("Driver unassigned successfully.", "success")
+    return redirect(url_for("vehicle_assignments", id=id))
 
 
 @app.route("/drivers")
@@ -5560,6 +6987,138 @@ def delivery_confirmation():
             flash(f"Error confirming delivery: {str(e)}", "error")
     
     return render_template("transport_bills/delivery_confirmation.html", bills=bills, selected_bill_id=selected_bill_id)
+
+
+# POD Dashboard Routes
+@app.route("/pod/dashboard")
+@permission_required("transport_bills", "view")
+def pod_dashboard():
+    """POD Dashboard with KPIs and status overview"""
+    tenant_id = get_tenant_id()
+    
+    # Get POD status counts
+    status_counts = db.session.query(
+        PodStatus.status_name,
+        PodStatus.color_code,
+        func.count(PodTracking.id).label('count')
+    ).join(PodTracking).filter(
+        PodTracking.tenant_id == tenant_id,
+        PodTracking.timestamp == func.max_over(PodTracking.timestamp).partition_by(PodTracking.transport_bill_id)
+    ).group_by(PodStatus.id).all()
+    
+    # Get aging data
+    aging_data = db.session.execute(text("""
+        SELECT 
+            CASE 
+                WHEN DATEDIFF(NOW(), pt.timestamp) <= 2 THEN '0-2 days'
+                WHEN DATEDIFF(NOW(), pt.timestamp) <= 7 THEN '3-7 days'
+                WHEN DATEDIFF(NOW(), pt.timestamp) <= 15 THEN '8-15 days'
+                ELSE '15+ days'
+            END as aging_bucket,
+            COUNT(*) as count
+        FROM pod_tracking pt
+        WHERE pt.tenant_id = :tenant_id
+        AND pt.timestamp = (
+            SELECT MAX(timestamp) 
+            FROM pod_tracking pt2 
+            WHERE pt2.transport_bill_id = pt.transport_bill_id
+        )
+        AND pt.status_code != 'completed'
+        GROUP BY aging_bucket
+        ORDER BY aging_bucket
+    """), {'tenant_id': tenant_id}).fetchall()
+    
+    # Get recent POD updates
+    recent_updates = PodTracking.query.filter_by(tenant_id=tenant_id)\
+        .order_by(PodTracking.timestamp.desc()).limit(10).all()
+    
+    return render_template('pod/dashboard.html',
+                         status_counts=status_counts,
+                         aging_data=aging_data,
+                         recent_updates=recent_updates)
+
+
+@app.route("/pod/list")
+@permission_required("transport_bills", "view")
+def pod_list():
+    """List all PODs with filters"""
+    tenant_id = get_tenant_id()
+    status_filter = request.args.get('status', '')
+    aging_filter = request.args.get('aging', '')
+    
+    # Build query for latest POD tracking per bill
+    subquery = db.session.query(
+        PodTracking.transport_bill_id,
+        func.max(PodTracking.timestamp).label('max_timestamp')
+    ).filter_by(tenant_id=tenant_id)\
+     .group_by(PodTracking.transport_bill_id)\
+     .subquery()
+    
+    query = db.session.query(
+        TransportBill, PodStatus, PodTracking
+    ).join(PodTracking, TransportBill.id == PodTracking.transport_bill_id)\
+     .join(PodStatus, PodTracking.status_code == PodStatus.status_code)\
+     .join(subquery, 
+            db.and_(
+                PodTracking.transport_bill_id == subquery.c.transport_bill_id,
+                PodTracking.timestamp == subquery.c.max_timestamp
+            ))\
+     .filter(PodTracking.tenant_id == tenant_id)
+    
+    if status_filter:
+        query = query.filter(PodTracking.status_code == status_filter)
+    
+    if aging_filter:
+        if aging_filter == '0-2':
+            query = query.filter(func.datediff(func.now(), PodTracking.timestamp) <= 2)
+        elif aging_filter == '3-7':
+            query = query.filter(func.datediff(func.now(), PodTracking.timestamp).between(3, 7))
+        elif aging_filter == '8-15':
+            query = query.filter(func.datediff(func.now(), PodTracking.timestamp).between(8, 15))
+        elif aging_filter == '15+':
+            query = query.filter(func.datediff(func.now(), PodTracking.timestamp) > 15)
+    
+    pods = query.order_by(PodTracking.timestamp.desc()).all()
+    
+    return render_template('pod/list.html', pods=pods, 
+                         status_filter=status_filter, aging_filter=aging_filter)
+
+
+@app.route("/pod/update_status/<int:bill_id>", methods=['POST'])
+@permission_required("transport_bills", "edit")
+def update_pod_status(bill_id):
+    """Update POD status"""
+    tenant_id = get_tenant_id()
+    
+    bill = TransportBill.query.filter_by(id=bill_id, tenant_id=tenant_id).first_or_404()
+    new_status = request.form.get('status')
+    remarks = request.form.get('remarks', '')
+    location = request.form.get('location', '')
+    
+    # Create new tracking entry
+    tracking = PodTracking(
+        transport_bill_id=bill_id,
+        status_code=new_status,
+        updated_by=current_user.id,
+        remarks=remarks,
+        location=location,
+        tenant_id=tenant_id
+    )
+    
+    db.session.add(tracking)
+    
+    # Update transport bill with POD details if completed
+    if new_status == 'completed':
+        bill.pod_number = request.form.get('pod_number', '')
+        bill.received_by_name = request.form.get('received_by_name', '')
+        bill.delivered_by = request.form.get('delivered_by', '')
+        bill.delivery_remarks = remarks
+        bill.status = 'delivered'
+    
+    db.session.commit()
+    
+    flash('POD status updated successfully', 'success')
+    return redirect(url_for('pod_list'))
 
 
 @app.route("/reports")
@@ -8703,6 +10262,787 @@ def check_subscription_limits(tenant_id):
     
     vehicle_count = Vehicle.query.filter_by(tenant_id=tenant_id).count()
     driver_count = Driver.query.filter_by(tenant_id=tenant_id).count()
+
+
+# =============================================================================
+# Customer Credit Management Routes
+# =============================================================================
+
+@app.route("/customers/<int:id>/credit")
+@permission_required("vendors", "view")
+def customer_credit_management(id):
+    """Customer credit management dashboard"""
+    from datetime import date, timedelta
+    
+    customer = get_scoped_record(Vendor, id)
+    
+    # Get or create credit info
+    credit_info = CustomerCredit.query.filter_by(vendor_id=id).first()
+    if not credit_info:
+        credit_info = CustomerCredit(
+            vendor_id=id,
+            tenant_id=get_current_tenant_id(),
+            credit_limit=0,
+            credit_period_days=30,
+            payment_terms='Net 30'
+        )
+        db.session.add(credit_info)
+        db.session.commit()
+    
+    # Get recent transactions
+    transactions = CustomerTransaction.query.filter_by(vendor_id=id).order_by(
+        CustomerTransaction.transaction_date.desc()
+    ).limit(10).all()
+    
+    # Calculate aging
+    today = date.today()
+    aging_30 = 0
+    aging_60 = 0
+    aging_90 = 0
+    aging_90_plus = 0
+    
+    for transaction in transactions:
+        if transaction.transaction_type == 'invoice':
+            days_overdue = (today - transaction.due_date).days if transaction.due_date else 0
+            if days_overdue <= 30:
+                aging_30 += transaction.amount
+            elif days_overdue <= 60:
+                aging_60 += transaction.amount
+            elif days_overdue <= 90:
+                aging_90 += transaction.amount
+            else:
+                aging_90_plus += transaction.amount
+    
+    return render_template(
+        "customers/credit_management.html",
+        customer=customer,
+        credit_info=credit_info,
+        transactions=transactions,
+        aging_30=aging_30,
+        aging_60=aging_60,
+        aging_90=aging_90,
+        aging_90_plus=aging_90_plus
+    )
+
+
+@app.route("/customers/<int:id>/credit/update", methods=["POST"])
+@permission_required("vendors", "edit")
+def update_customer_credit(id):
+    """Update customer credit information"""
+    customer = get_scoped_record(Vendor, id)
+    
+    credit_info = CustomerCredit.query.filter_by(vendor_id=id).first()
+    if not credit_info:
+        credit_info = CustomerCredit(
+            vendor_id=id,
+            tenant_id=get_current_tenant_id()
+        )
+        db.session.add(credit_info)
+    
+    # Update credit info
+    credit_info.credit_limit = float(request.form.get('credit_limit', 0))
+    credit_info.credit_period_days = int(request.form.get('credit_period_days', 30))
+    credit_info.payment_terms = request.form.get('payment_terms', 'Net 30')
+    credit_info.is_credit_hold = 'credit_hold' in request.form
+    credit_info.hold_reason = request.form.get('hold_reason', '')
+    credit_info.credit_status = request.form.get('credit_status', 'active')
+    
+    db.session.commit()
+    
+    flash('Customer credit information updated successfully!', 'success')
+    return redirect(url_for('customer_credit_management', id=id))
+
+
+@app.route("/customers/aging-report")
+@permission_required("vendors", "view")
+def customer_aging_report():
+    """Master aging report for all customers"""
+    from datetime import date, timedelta
+    
+    customers = scoped_query(Vendor).all()
+    aging_data = []
+    
+    for customer in customers:
+        credit_info = CustomerCredit.query.filter_by(vendor_id=customer.id).first()
+        
+        # Calculate aging for this customer
+        aging = calculate_customer_aging(customer.id)
+        
+        aging_data.append({
+            'customer': customer,
+            'credit_info': credit_info,
+            'aging': aging
+        })
+    
+    return render_template(
+        "customers/aging_report.html",
+        aging_data=aging_data,
+        total_customers=len(customers)
+    )
+
+
+def calculate_customer_aging(vendor_id):
+    """Calculate aging buckets for a customer"""
+    from datetime import date
+    
+    today = date.today()
+    transactions = CustomerTransaction.query.filter_by(
+        vendor_id=vendor_id,
+        transaction_type='invoice'
+    ).all()
+    
+    aging = {
+        'current': 0,      # 0-30 days
+        'days_31_60': 0,   # 31-60 days
+        'days_61_90': 0,   # 61-90 days
+        'days_90_plus': 0,   # 90+ days
+        'total': 0
+    }
+    
+    for transaction in transactions:
+        if not transaction.due_date:
+            continue
+            
+        days_overdue = (today - transaction.due_date).days
+        amount = float(transaction.amount)
+        
+        if days_overdue <= 30:
+            aging['current'] += amount
+        elif days_overdue <= 60:
+            aging['days_31_60'] += amount
+        elif days_overdue <= 90:
+            aging['days_61_90'] += amount
+        else:
+            aging['days_90_plus'] += amount
+        
+        aging['total'] += amount
+    
+    return aging
+
+
+# =============================================================================
+# Customer Classification System Routes
+# =============================================================================
+
+@app.route("/customers/classification")
+@permission_required("vendors", "view")
+def customer_classification():
+    """Customer classification management interface"""
+    categories = CustomerCategory.query.filter_by(
+        tenant_id=get_current_tenant_id(),
+        is_active=True
+    ).order_by(CustomerCategory.sort_order).all()
+    
+    return render_template(
+        "customers/classification.html",
+        categories=categories
+    )
+
+
+@app.route("/customers/classification/create", methods=["POST"])
+@permission_required("vendors", "edit")
+def create_customer_category():
+    """Create new customer category"""
+    category = CustomerCategory(
+        tenant_id=get_current_tenant_id(),
+        category_name=request.form.get('category_name'),
+        category_code=request.form.get('category_code'),
+        description=request.form.get('description'),
+        min_credit_limit=float(request.form.get('min_credit_limit', 0)),
+        max_credit_limit=float(request.form.get('max_credit_limit', 0)),
+        default_payment_terms=request.form.get('default_payment_terms', 'Net 30'),
+        service_priority=request.form.get('service_priority', 'medium'),
+        sla_hours=int(request.form.get('sla_hours', 48)),
+        sort_order=int(request.form.get('sort_order', 0))
+    )
+    
+    db.session.add(category)
+    db.session.commit()
+    
+    flash('Customer category created successfully!', 'success')
+    return redirect(url_for('customer_classification'))
+
+
+@app.route("/customers/<int:id>/classify", methods=["POST"])
+@permission_required("vendors", "edit")
+def classify_customer(id):
+    """Classify individual customer"""
+    customer = get_scoped_record(Vendor, id)
+    
+    # Update classification
+    customer.customer_type = request.form.get('customer_type', 'regular')
+    customer.customer_tier = request.form.get('customer_tier', 'bronze')
+    customer.customer_segment = request.form.get('customer_segment')
+    customer.customer_lifecycle_status = request.form.get('lifecycle_status', 'active')
+    customer.classification_notes = request.form.get('classification_notes')
+    customer.classification_date = date.today()
+    customer.classified_by = session['user_id']
+    
+    # Auto-adjust credit limit based on category
+    category = CustomerCategory.query.filter_by(
+        category_code=customer.customer_tier
+    ).first()
+    
+    if category and not customer.credit_info:
+        customer.credit_info.credit_limit = category.max_credit_limit
+        db.session.add(customer.credit_info)
+    
+    db.session.commit()
+    
+    flash('Customer classified successfully!', 'success')
+    return redirect(url_for('edit_vendor', id=id))
+
+
+def get_customer_classification_badge(customer_type, customer_tier):
+    """Generate appropriate badge for customer classification"""
+    type_colors = {
+        'regular': 'primary',
+        'premium': 'info',
+        'vip': 'warning',
+        'one_time': 'secondary'
+    }
+    
+    tier_colors = {
+        'bronze': 'secondary',
+        'silver': 'light',
+        'gold': 'warning',
+        'platinum': 'success'
+    }
+    
+    return {
+        'type_badge': f'<span class="badge bg-{type_colors.get(customer_type, "secondary")}">{customer_type.title()}</span>',
+        'tier_badge': f'<span class="badge bg-{tier_colors.get(customer_tier, "secondary")}">{customer_tier.title()}</span>'
+    }
+
+
+def auto_classify_customer(customer):
+    """Automatically classify customer based on transaction history"""
+    if not customer.transactions:
+        return 'one_time'
+    
+    # Count transactions in last 12 months
+    recent_transactions = len([t for t in customer.transactions 
+                             if t.transaction_date >= (date.today() - timedelta(days=365))])
+    
+    if recent_transactions > 50:
+        return 'vip'
+    elif recent_transactions > 20:
+        return 'premium'
+    elif recent_transactions > 5:
+        return 'regular'
+    else:
+        return 'one_time'
+
+
+# =============================================================================
+# Customer Communication Hub Routes
+# =============================================================================
+
+@app.route("/customers/communications")
+@permission_required("vendors", "view")
+def customer_communications():
+    """Customer communication history interface"""
+    vendor_id = request.args.get('vendor_id', 0, type=int)
+    customer = get_scoped_record(Vendor, vendor_id) if vendor_id else None
+    
+    if not customer:
+        flash('Customer not found', 'error')
+        return redirect(url_for('vendors'))
+    
+    # Get communications with filters
+    communications = CustomerCommunication.query.filter_by(vendor_id=customer.id).order_by(
+        CustomerCommunication.communication_date.desc()
+    ).all()
+    
+    # Get feedback
+    feedback = CustomerFeedback.query.filter_by(vendor_id=customer.id).order_by(
+        CustomerFeedback.feedback_date.desc()
+    ).all()
+    
+    return render_template(
+        "customers/communications.html",
+        customer=customer,
+        communications=communications,
+        feedback=feedback
+    )
+
+
+@app.route("/customers/<int:id>/add-communication", methods=["POST"])
+@permission_required("vendors", "edit")
+def add_customer_communication(id):
+    """Add new customer communication"""
+    customer = get_scoped_record(Vendor, id)
+    
+    communication = CustomerCommunication(
+        tenant_id=get_current_tenant_id(),
+        vendor_id=customer.id,
+        communication_type=request.form.get('communication_type'),
+        subject=request.form.get('subject'),
+        message=request.form.get('message'),
+        direction='outbound',
+        priority=request.form.get('priority', 'medium'),
+        status=request.form.get('status', 'open'),
+        communicated_by=session['user_id'],
+        next_followup=datetime.strptime(request.form.get('next_followup'), '%Y-%m-%d') if request.form.get('next_followup') else None
+    )
+    
+    db.session.add(communication)
+    db.session.commit()
+    
+    flash('Communication added successfully!', 'success')
+    return redirect(url_for('customer_communications', vendor_id=id))
+
+
+@app.route("/customers/<int:id>/feedback")
+@permission_required("vendors", "view")
+def customer_feedback():
+    """Customer feedback management interface"""
+    vendor_id = request.args.get('vendor_id', 0, type=int)
+    customer = get_scoped_record(Vendor, vendor_id) if vendor_id else None
+    
+    if not customer:
+        flash('Customer not found', 'error')
+        return redirect(url_for('vendors'))
+    
+    # Get feedback
+    feedback = CustomerFeedback.query.filter_by(vendor_id=customer.id).order_by(
+        CustomerFeedback.feedback_date.desc()
+    ).all()
+    
+    return render_template(
+        "customers/feedback.html",
+        customer=customer,
+        feedback=feedback
+    )
+
+
+@app.route("/customers/<int:id>/add-feedback", methods=["POST"])
+@permission_required("vendors", "edit")
+def add_customer_feedback(id):
+    """Add new customer feedback"""
+    customer = get_scoped_record(Vendor, id)
+    
+    feedback = CustomerFeedback(
+        tenant_id=get_current_tenant_id(),
+        vendor_id=customer.id,
+        feedback_type=request.form.get('feedback_type'),
+        rating=int(request.form.get('rating', 0)),
+        feedback_text=request.form.get('feedback_text'),
+        resolution_status=request.form.get('resolution_status', 'pending')
+    )
+    
+    db.session.add(feedback)
+    db.session.commit()
+    
+    flash('Feedback recorded successfully!', 'success')
+    return redirect(url_for('customer_feedback', vendor_id=id))
+
+
+@app.route("/customers/automated-reminders")
+@permission_required("vendors", "view")
+def customer_automated_reminders():
+    """Automated reminder settings interface"""
+    return render_template("customers/automated_reminders.html")
+
+
+# =============================================================================
+# Advanced Customer Analytics Routes
+# =============================================================================
+
+@app.route("/customers/analytics/dashboard")
+@permission_required("vendors", "view")
+def customer_analytics_dashboard():
+    """Customer analytics dashboard with KPIs and insights"""
+    customers = scoped_query(Vendor).all()
+    
+    # Calculate overall metrics
+    total_customers = len(customers)
+    total_revenue = sum(credit.current_outstanding or 0 for credit in [c.credit_info for c in customers if c.credit_info])
+    high_value_customers = len([c for c in customers if c.customer_tier in ['gold', 'platinum']])
+    
+    return render_template(
+        "customers/analytics_dashboard.html",
+        customers=customers,
+        total_customers=total_customers,
+        total_revenue=total_revenue,
+        high_value_customers=high_value_customers
+    )
+
+
+@app.route("/customers/<int:id>/analytics")
+@permission_required("vendors", "view")
+def customer_analytics_detail():
+    """Detailed analytics for individual customer"""
+    customer = get_scoped_record(Vendor, id)
+    
+    # Get period filters
+    period_type = request.args.get('period', 'monthly')
+    period_end = date.today()
+    
+    if period_type == 'monthly':
+        period_start = period_end - timedelta(days=30)
+    elif period_type == 'quarterly':
+        period_start = period_end - timedelta(days=90)
+    elif period_type == 'yearly':
+        period_start = period_end - timedelta(days=365)
+    else:
+        period_start = period_end - timedelta(days=30)
+    
+    # Calculate analytics
+    analytics = calculate_customer_analytics(id, period_start, period_end)
+    
+    # Get historical data for trends
+    historical_data = CustomerAnalytics.query.filter_by(vendor_id=id).order_by(
+        CustomerAnalytics.period_start.desc()
+    ).limit(12).all()  # Last 12 periods
+    
+    return render_template(
+        "customers/analytics_detail.html",
+        customer=customer,
+        analytics=analytics,
+        historical_data=historical_data,
+        period_type=period_type
+    )
+
+
+@app.route("/customers/analytics/performance")
+@permission_required("vendors", "view")
+def customer_performance_report():
+    """Customer performance comparison report"""
+    customers = scoped_query(Vendor).all()
+    customer_data = []
+    
+    for customer in customers:
+        # Get latest analytics
+        latest_analytics = CustomerAnalytics.query.filter_by(vendor_id=customer.id).order_by(
+            CustomerAnalytics.period_start.desc()
+        ).first()
+        
+        if latest_analytics:
+            customer_data.append({
+                'customer': customer,
+                'analytics': latest_analytics,
+                'rank': 0  # Will be calculated
+            })
+    
+    # Sort by revenue
+    customer_data.sort(key=lambda x: x['analytics'].total_revenue, reverse=True)
+    
+    # Assign ranks
+    for i, data in enumerate(customer_data, 1):
+        data['rank'] = i
+    
+    return render_template(
+        "customers/performance_report.html",
+        customer_data=customer_data
+    )
+
+
+def calculate_customer_analytics(vendor_id, period_start, period_end):
+    """Calculate comprehensive analytics for a customer"""
+    from sqlalchemy import func
+    
+    # Get transport bills for the period
+    bills = TransportBill.query.filter(
+        TransportBill.party_information == str(vendor_id),  # Assuming party_information stores vendor_id
+        TransportBill.date.between(period_start, period_end)
+    ).all()
+    
+    # Get payments for the period
+    payments = CustomerTransaction.query.filter(
+        CustomerTransaction.vendor_id == vendor_id,
+        CustomerTransaction.transaction_type == 'payment',
+        CustomerTransaction.transaction_date.between(period_start, period_end)
+    ).all()
+    
+    # Get feedback for the period
+    feedback = CustomerFeedback.query.filter(
+        CustomerFeedback.vendor_id == vendor_id,
+        CustomerFeedback.feedback_date.between(period_start, period_end)
+    ).all()
+    
+    # Calculate metrics
+    total_revenue = sum(float(b.rate) for b in bills)
+    total_bills = len(bills)
+    total_deliveries = len(bills)  # Simplified: each bill = one delivery
+    on_time_deliveries = total_deliveries  # Simplified for now
+    total_payments = sum(float(t.amount) for t in payments)
+    outstanding_balance = total_revenue - total_payments
+    
+    # Calculate satisfaction metrics
+    total_feedback = len(feedback)
+    positive_feedback = len([f for f in feedback if f.rating and f.rating >= 4])
+    satisfaction_score = (sum(f.rating or 0 for f in feedback) / total_feedback) if total_feedback > 0 else 0
+    positive_feedback_pct = (positive_feedback / total_feedback * 100) if total_feedback > 0 else 0
+    
+    # Calculate delivery performance
+    on_time_rate = 100.0  # Simplified for now
+    avg_order_value = total_revenue / total_bills if total_bills > 0 else 0
+    
+    # Calculate lifetime value (simplified)
+    lifetime_value = total_revenue * 0.2  # 20% of revenue as estimated lifetime value
+    
+    # Calculate churn risk (simplified)
+    churn_probability = 5.0  # Default low risk
+    if on_time_rate < 80:
+        churn_probability = 20.0  # High risk
+    elif on_time_rate < 90:
+        churn_probability = 10.0  # Medium risk
+    
+    # Calculate growth rate (month-over-month)
+    previous_period_revenue = get_previous_period_revenue(vendor_id, period_start)
+    growth_rate = ((total_revenue - previous_period_revenue) / previous_period_revenue * 100) if previous_period_revenue > 0 else 0
+    
+    return {
+        'total_revenue': total_revenue,
+        'total_bills': total_bills,
+        'total_deliveries': total_deliveries,
+        'on_time_deliveries': on_time_deliveries,
+        'on_time_delivery_rate': on_time_rate,
+        'avg_order_value': avg_order_value,
+        'total_payments': total_payments,
+        'outstanding_balance': outstanding_balance,
+        'satisfaction_score': satisfaction_score,
+        'total_feedback': total_feedback,
+        'positive_feedback_percentage': positive_feedback_pct,
+        'customer_lifetime_value': lifetime_value,
+        'churn_probability': churn_probability,
+        'growth_rate': growth_rate
+    }
+
+
+def get_previous_period_revenue(vendor_id, current_period_start):
+    """Get revenue from previous period for growth calculation"""
+    previous_period_end = current_period_start - timedelta(days=30)
+    revenue = db.session.query(func.sum(TransportBill.rate)).filter(
+        TransportBill.party_information == str(vendor_id),
+        TransportBill.date.between(previous_period_end, current_period_start)
+    ).scalar() or 0
+    return revenue
+
+
+# =============================================================================
+# Enhanced Customer Portal Routes
+# =============================================================================
+
+@app.route("/customer-portal/dashboard")
+def enhanced_customer_dashboard():
+    """Enhanced customer dashboard with modern UI"""
+    account = db.session.get(CustomerPortalAccount, session.get("customer_id"))
+    if not account or not account.is_active:
+        flash('Please login to access your dashboard', 'error')
+        return redirect(url_for('customer_login'))
+    
+    # Get customer data
+    customer = account.vendor
+    recent_bills = TransportBill.query.filter_by(
+        party_information=str(customer.id)
+    ).order_by(TransportBill.date.desc()).limit(10).all()
+    
+    # Get notifications
+    notifications = CustomerNotification.query.filter_by(
+        vendor_id=customer.id,
+        is_read=False
+    ).order_by(CustomerNotification.created_at.desc()).limit(5).all()
+    
+    # Get unread count
+    unread_count = CustomerNotification.query.filter_by(
+        vendor_id=customer.id,
+        is_read=False
+    ).count()
+    
+    return render_template(
+        "customer_portal/enhanced_dashboard.html",
+        account=account,
+        customer=customer,
+        recent_bills=recent_bills,
+        notifications=notifications,
+        unread_count=unread_count
+    )
+
+
+@app.route("/customer-portal/orders")
+def customer_orders():
+    """Customer order tracking interface"""
+    account = db.session.get(CustomerPortalAccount, session.get("customer_id"))
+    if not account or not account.is_active:
+        return redirect(url_for('customer_login'))
+    
+    customer = account.vendor
+    
+    # Get filters
+    status_filter = request.args.get('status', 'all')
+    date_from = request.args.get('from')
+    date_to = request.args.get('to')
+    
+    # Build query
+    query = TransportBill.query.filter_by(party_information=str(customer.id))
+    
+    if status_filter != 'all':
+        query = query.filter_by(status=status_filter)
+    
+    if date_from:
+        try:
+            query = query.filter(TransportBill.date >= datetime.strptime(date_from, '%Y-%m-%d').date())
+        except:
+            pass
+    
+    if date_to:
+        try:
+            query = query.filter(TransportBill.date <= datetime.strptime(date_to, '%Y-%m-%d').date())
+        except:
+            pass
+    
+    orders = query.order_by(TransportBill.date.desc()).all()
+    
+    return render_template(
+        "customer_portal/orders.html",
+        account=account,
+        customer=customer,
+        orders=orders,
+        status_filter=status_filter,
+        date_from=date_from,
+        date_to=date_to
+    )
+
+
+@app.route("/customer-portal/documents")
+def customer_documents():
+    """Customer document management interface"""
+    account = db.session.get(CustomerPortalAccount, session.get("customer_id"))
+    if not account or not account.is_active:
+        return redirect(url_for('customer_login'))
+    
+    customer = account.vendor
+    
+    # Get documents
+    documents = CustomerDocument.query.filter_by(vendor_id=customer.id).order_by(
+        CustomerDocument.uploaded_at.desc()
+    ).all()
+    
+    return render_template(
+        "customer_portal/documents.html",
+        account=account,
+        customer=customer,
+        documents=documents
+    )
+
+
+@app.route("/customer-portal/upload-document", methods=["POST"])
+def upload_customer_document():
+    """Handle customer document uploads"""
+    account = db.session.get(CustomerPortalAccount, session.get("customer_id"))
+    if not account or not account.is_active:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file selected'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    # Simple file validation
+    allowed_extensions = {'pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'}
+    if '.' in file.filename and file.filename.rsplit('.', 1)[1].lower() in allowed_extensions:
+        filename = secure_filename(file.filename)
+        
+        # Create document record
+        document = CustomerDocument(
+            tenant_id=account.tenant_id,
+            vendor_id=account.vendor_id,
+            document_type=request.form.get('document_type', 'other'),
+            document_name=request.form.get('document_name', filename),
+            file_path=filename,
+            file_size=0,  # Would be set after actual file save
+            mime_type=file.mimetype,
+            uploaded_by=account.id
+        )
+        
+        db.session.add(document)
+        db.session.commit()
+        
+        return jsonify({'success': True, 'document_id': document.id})
+    
+    return jsonify({'error': 'File type not allowed'}), 400
+
+
+@app.route("/customer-portal/profile")
+def customer_profile():
+    """Customer profile management interface"""
+    account = db.session.get(CustomerPortalAccount, session.get("customer_id"))
+    if not account or not account.is_active:
+        return redirect(url_for('customer_login'))
+    
+    customer = account.vendor
+    
+    if request.method == 'POST':
+        # Update profile information
+        customer.contact_person = request.form.get('primary_contact_name')
+        customer.mobile = request.form.get('primary_contact_phone')
+        customer.email = request.form.get('primary_contact_email')
+        
+        # Update account preferences
+        account.language_preference = request.form.get('language_preference', 'en')
+        account.timezone_preference = request.form.get('timezone_preference', 'UTC')
+        account.portal_theme = request.form.get('portal_theme', 'light')
+        
+        db.session.commit()
+        flash('Profile updated successfully!', 'success')
+        return redirect(url_for('customer_profile'))
+    
+    return render_template(
+        "customer_portal/profile.html",
+        account=account,
+        customer=customer
+    )
+
+
+@app.route("/customer-portal/notifications")
+def customer_notifications():
+    """Customer notification center"""
+    account = db.session.get(CustomerPortalAccount, session.get("customer_id"))
+    if not account or not account.is_active:
+        return redirect(url_for('customer_login'))
+    
+    customer = account.vendor
+    
+    # Get notifications with pagination
+    page = request.args.get('page', 1, type=int)
+    per_page = 20
+    
+    notifications = CustomerNotification.query.filter_by(vendor_id=customer.id).order_by(
+        CustomerNotification.created_at.desc()
+    ).paginate(page=page, per_page=per_page)
+    
+    return render_template(
+        "customer_portal/notifications.html",
+        account=account,
+        customer=customer,
+        notifications=notifications
+    )
+
+
+@app.route("/customer-portal/mark-notification-read/<int:notification_id>", methods=["POST"])
+def mark_notification_read(notification_id):
+    """Mark notification as read"""
+    account = db.session.get(CustomerPortalAccount, session.get("customer_id"))
+    if not account or not account.is_active:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    notification = CustomerNotification.query.filter_by(
+        id=notification_id,
+        vendor_id=account.vendor_id
+    ).first()
+    
+    if notification:
+        notification.is_read = True
+        notification.read_at = datetime.utcnow()
+        db.session.commit()
+        
+        return jsonify({'success': True})
+    
+    return jsonify({'error': 'Notification not found'}), 404
     user_count = User.query.filter_by(tenant_id=tenant_id).count()
     
     limits_exceeded = []

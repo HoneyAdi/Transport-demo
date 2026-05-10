@@ -1,0 +1,186 @@
+{% extends 'base.html' %}
+
+{% block title %}POD List - Transport Management System{% endblock %}
+
+{% block content %}
+<div class="navbar-top">
+    <h4 class="mb-0"><i class="bi bi-list-ul"></i> POD Management</h4>
+</div>
+
+<!-- Filters -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">Status Filter</label>
+                <select class="form-select" name="status">
+                    <option value="">All Statuses</option>
+                    <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
+                    <option value="submitted" {% if status_filter == 'submitted' %}selected{% endif %}>Submitted</option>
+                    <option value="verified" {% if status_filter == 'verified' %}selected{% endif %}>Verified</option>
+                    <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rejected</option>
+                    <option value="completed" {% if status_filter == 'completed' %}selected{% endif %}>Completed</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Aging Filter</label>
+                <select class="form-select" name="aging">
+                    <option value="">All Ages</option>
+                    <option value="0-2" {% if aging_filter == '0-2' %}selected{% endif %}>0-2 days</option>
+                    <option value="3-7" {% if aging_filter == '3-7' %}selected{% endif %}>3-7 days</option>
+                    <option value="8-15" {% if aging_filter == '8-15' %}selected{% endif %}>8-15 days</option>
+                    <option value="15+" {% if aging_filter == '15+' %}selected{% endif %}>15+ days</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">&nbsp;</label>
+                <div class="d-grid">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-funnel"></i> Apply Filters
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- POD List -->
+<div class="card">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Bill Name</th>
+                        <th>GR Number</th>
+                        <th>Party</th>
+                        <th>Status</th>
+                        <th>Days in Status</th>
+                        <th>Updated By</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for bill, status, tracking in pods %}
+                    <tr>
+                        <td>{{ bill.name }}</td>
+                        <td>{{ bill.gr_number or '-' }}</td>
+                        <td>{{ bill.party_information or '-' }}</td>
+                        <td>
+                            <span class="badge" style="background-color: {{ status.color_code }};">
+                                {{ status.status_name }}
+                            </span>
+                        </td>
+                        <td>
+                            {% set days = (now() - tracking.timestamp).days %}
+                            <span class="{% if days > 7 %}text-danger{% elif days > 3 %}text-warning{% else %}text-success{% endif %}">
+                                {{ days }} days
+                            </span>
+                        </td>
+                        <td>{{ tracking.updated_by_user.name if tracking.updated_by_user else '-' }}</td>
+                        <td>
+                            <button class="btn btn-sm btn-primary" onclick="updateStatus({{ bill.id }})">
+                                <i class="bi bi-pencil"></i> Update
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Status Update Modal -->
+<div class="modal fade" id="statusModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Update POD Status</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" id="statusForm">
+                <div class="modal-body">
+                    <input type="hidden" name="bill_id" id="modalBillId">
+                    
+                    <div class="mb-3">
+                        <label class="form-label">New Status</label>
+                        <select class="form-select" name="status" required>
+                            <option value="">Select Status</option>
+                            <option value="pending">Pending</option>
+                            <option value="submitted">Submitted</option>
+                            <option value="verified">Verified</option>
+                            <option value="rejected">Rejected</option>
+                            <option value="completed">Completed</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Remarks</label>
+                        <textarea class="form-control" name="remarks" rows="3"></textarea>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Location</label>
+                        <input type="text" class="form-control" name="location">
+                    </div>
+                    
+                    <div id="podDetails" style="display: none;">
+                        <div class="mb-3">
+                            <label class="form-label">POD Number</label>
+                            <input type="text" class="form-control" name="pod_number">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Received By Name</label>
+                            <input type="text" class="form-control" name="received_by_name">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Delivered By</label>
+                            <input type="text" class="form-control" name="delivered_by">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Update Status</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function updateStatus(billId) {
+    document.getElementById('modalBillId').value = billId;
+    const modal = new bootstrap.Modal(document.getElementById('statusModal'));
+    modal.show();
+}
+
+// Show POD details when status is completed
+document.querySelector('select[name="status"]').addEventListener('change', function() {
+    const podDetails = document.getElementById('podDetails');
+    if (this.value === 'completed') {
+        podDetails.style.display = 'block';
+    } else {
+        podDetails.style.display = 'none';
+    }
+});
+
+document.getElementById('statusForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const formData = new FormData(this);
+    const billId = formData.get('bill_id');
+    
+    fetch('/pod/update_status/' + billId, {
+        method: 'POST',
+        body: formData
+    }).then(response => {
+        if (response.ok) {
+            location.reload();
+        }
+    });
+});
+</script>
+{% endblock %}

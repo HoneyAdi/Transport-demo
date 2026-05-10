@@ -1,0 +1,250 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ 'Edit' if edit else 'Add' }} Service Record - {{ vehicle.registration_number }}{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="navbar-top d-flex justify-content-between align-items-center">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-wrench"></i> 
+            {{ 'Edit' if edit else 'Add' }} Service Record
+            <small class="text-muted fs-6">- {{ vehicle.registration_number }}</small>
+        </h4>
+    </div>
+    <div>
+        <a href="{{ url_for('vehicle_services', id=vehicle.id) }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Service History
+        </a>
+    </div>
+</div>
+
+<!-- Service Form -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-wrench"></i> Service Details</h5>
+    </div>
+    <div class="card-body">
+        <form method="POST" enctype="multipart/form-data" class="needs-validation" novalidate>
+            <div class="row g-3">
+                <!-- Service Date -->
+                <div class="col-md-4">
+                    <label class="form-label">Service Date <span class="text-danger">*</span></label>
+                    <input type="date" name="service_date" class="form-control" required
+                           value="{{ service.service_date.strftime('%Y-%m-%d') if edit and service.service_date else today }}">
+                </div>
+                
+                <!-- Service Type -->
+                <div class="col-md-4">
+                    <label class="form-label">Service Type <span class="text-danger">*</span></label>
+                    <select name="service_type" class="form-select" required>
+                        <option value="">Select Service Type</option>
+                        {% for stype in service_types %}
+                        <option value="{{ stype }}" {% if edit and service.service_type == stype %}selected{% endif %}>{{ stype }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <!-- Odometer Reading -->
+                <div class="col-md-4">
+                    <label class="form-label">Odometer Reading (km)</label>
+                    <input type="number" name="odometer_reading" class="form-control" min="0"
+                           value="{{ service.odometer_reading if edit else '' }}"
+                           placeholder="Current odometer reading">
+                </div>
+                
+                <!-- Service Description -->
+                <div class="col-12">
+                    <label class="form-label">Service Description</label>
+                    <textarea name="service_description" class="form-control" rows="3" 
+                              placeholder="Describe the work done...">{{ service.service_description if edit else '' }}</textarea>
+                </div>
+                
+                <!-- Garage Name -->
+                <div class="col-md-4">
+                    <label class="form-label">Garage/Service Center</label>
+                    <input type="text" name="garage_name" class="form-control"
+                           value="{{ service.garage_name if edit else '' }}"
+                           placeholder="Garage name">
+                </div>
+                
+                <!-- Garage Contact -->
+                <div class="col-md-4">
+                    <label class="form-label">Garage Contact</label>
+                    <input type="text" name="garage_contact" class="form-control"
+                           value="{{ service.garage_contact if edit else '' }}"
+                           placeholder="Phone number">
+                </div>
+                
+                <!-- Garage Address -->
+                <div class="col-md-4">
+                    <label class="form-label">Garage Address</label>
+                    <textarea name="garage_address" class="form-control" rows="1"
+                              placeholder="Address...">{{ service.garage_address if edit else '' }}</textarea>
+                </div>
+            </div>
+            
+            <hr class="my-4">
+            
+            <!-- Costs Section -->
+            <h6 class="text-primary mb-3"><i class="bi bi-cash-stack"></i> Costs</h6>
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Labor Cost (₹)</label>
+                    <input type="number" name="labor_cost" class="form-control" step="0.01" min="0"
+                           value="{{ service.labor_cost if edit else '0' }}"
+                           onchange="calculateTotal()" id="laborCost">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Parts Cost (₹)</label>
+                    <input type="number" name="parts_cost" class="form-control" step="0.01" min="0"
+                           value="{{ service.parts_cost if edit else '0' }}"
+                           onchange="calculateTotal()" id="partsCost">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Total Cost (₹) <span class="text-danger">*</span></label>
+                    <input type="number" name="total_cost" class="form-control" step="0.01" min="0" required
+                           value="{{ service.total_cost if edit else '0' }}" id="totalCost">
+                </div>
+            </div>
+            
+            <hr class="my-4">
+            
+            <!-- Parts Replaced Section -->
+            <h6 class="text-primary mb-3"><i class="bi bi-box-seam"></i> Parts Replaced</h6>
+            <div id="partsContainer">
+                {% if edit and parts_list %}
+                    {% for part in parts_list %}
+                    <div class="row g-2 mb-2 part-row">
+                        <div class="col-md-6">
+                            <input type="text" name="part_name[]" class="form-control" 
+                                   value="{{ part.part }}" placeholder="Part name">
+                        </div>
+                        <div class="col-md-4">
+                            <input type="number" name="part_cost[]" class="form-control" step="0.01" min="0"
+                                   value="{{ part.cost }}" placeholder="Cost (₹)">
+                        </div>
+                        <div class="col-md-2">
+                            <button type="button" class="btn btn-outline-danger" onclick="removePartRow(this)">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% endif %}
+            </div>
+            <button type="button" class="btn btn-outline-primary btn-sm mt-2" onclick="addPartRow()">
+                <i class="bi bi-plus-lg"></i> Add Part
+            </button>
+            
+            <hr class="my-4">
+            
+            <!-- Next Service Due Section -->
+            <h6 class="text-primary mb-3"><i class="bi bi-calendar-event"></i> Next Service Due</h6>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label">Next Service Date</label>
+                    <input type="date" name="next_service_date" class="form-control"
+                           value="{{ service.next_service_date.strftime('%Y-%m-%d') if edit and service.next_service_date else '' }}">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Next Service at Odometer (km)</label>
+                    <input type="number" name="next_service_km" class="form-control" min="0"
+                           value="{{ service.next_service_km if edit else '' }}"
+                           placeholder="Odometer reading for next service">
+                </div>
+            </div>
+            
+            <hr class="my-4">
+            
+            <!-- Invoice Section -->
+            <h6 class="text-primary mb-3"><i class="bi bi-receipt"></i> Invoice Details</h6>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label">Invoice/Receipt Number</label>
+                    <input type="text" name="invoice_number" class="form-control"
+                           value="{{ service.invoice_number if edit else '' }}"
+                           placeholder="Invoice number">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Upload Invoice/Receipt</label>
+                    <input type="file" name="invoice_file" class="form-control" accept=".pdf,.jpg,.jpeg,.png">
+                    {% if edit and service.invoice_path %}
+                    <small class="text-muted">
+                        Current: <a href="{{ url_for('static', filename=service.invoice_path) }}" target="_blank">View Invoice</a>
+                    </small>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <hr class="my-4">
+            
+            <!-- Notes -->
+            <div class="mb-3">
+                <label class="form-label">Additional Notes</label>
+                <textarea name="notes" class="form-control" rows="3" 
+                          placeholder="Any additional notes...">{{ service.notes if edit else '' }}</textarea>
+            </div>
+            
+            <!-- Submit Buttons -->
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-lg"></i> {{ 'Update' if edit else 'Save' }} Service Record
+                </button>
+                <a href="{{ url_for('vehicle_services', id=vehicle.id) }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-x-lg"></i> Cancel
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function calculateTotal() {
+    const labor = parseFloat(document.getElementById('laborCost').value) || 0;
+    const parts = parseFloat(document.getElementById('partsCost').value) || 0;
+    document.getElementById('totalCost').value = (labor + parts).toFixed(2);
+}
+
+function addPartRow() {
+    const container = document.getElementById('partsContainer');
+    const row = document.createElement('div');
+    row.className = 'row g-2 mb-2 part-row';
+    row.innerHTML = `
+        <div class="col-md-6">
+            <input type="text" name="part_name[]" class="form-control" placeholder="Part name">
+        </div>
+        <div class="col-md-4">
+            <input type="number" name="part_cost[]" class="form-control" step="0.01" min="0" placeholder="Cost (₹)">
+        </div>
+        <div class="col-md-2">
+            <button type="button" class="btn btn-outline-danger" onclick="removePartRow(this)">
+                <i class="bi bi-trash"></i>
+            </button>
+        </div>
+    `;
+    container.appendChild(row);
+}
+
+function removePartRow(btn) {
+    btn.closest('.part-row').remove();
+}
+
+// Form validation
+(function() {
+    'use strict';
+    window.addEventListener('load', function() {
+        var forms = document.getElementsByClassName('needs-validation');
+        var validation = Array.prototype.filter.call(forms, function(form) {
+            form.addEventListener('submit', function(event) {
+                if (form.checkValidity() === false) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+                form.classList.add('was-validated');
+            }, false);
+        });
+    }, false);
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,268 @@
+{% extends 'base.html' %}
+
+{% block title %}Credit Management - {{ customer.vendor_name }}{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="navbar-top d-flex justify-content-between align-items-center">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-credit-card"></i> Credit Management
+            <small class="text-muted fs-6">- {{ customer.vendor_name }}</small>
+        </h4>
+    </div>
+    <div>
+        <a href="{{ url_for('vendors') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Customers
+        </a>
+    </div>
+</div>
+
+<!-- Credit Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card {% if credit_info.is_credit_hold %}border-danger{% else %}border-success{% endif %}">
+            <div class="card-body text-center">
+                <h3 class="mb-0 {% if credit_info.is_credit_hold %}text-danger{% else %}text-success{% endif %}">
+                    {% if credit_info.is_credit_hold %}ON HOLD{% else %}ACTIVE{% endif %}
+                </h3>
+                <small class="text-muted">Credit Status</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">₹{{ "{:,.0f}".format((credit_info.credit_limit | float) or 0) }}</h3>
+                <small class="text-white-50">Credit Limit</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card {% if (credit_info.current_outstanding) > (credit_info.credit_limit | float) * 0.8 %}bg-warning{% else %}bg-info{% endif %} text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">₹{{ "{:,.0f}".format((credit_info.current_outstanding) or 0) }}</h3>
+                <small class="text-white-50">Current Outstanding</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">₹{{ "{:,.0f}".format((credit_info.available_credit) or 0) }}</h3>
+                <small class="text-white-50">Available Credit</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Credit Utilization -->
+<div class="row mb-4">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-speedometer2"></i> Credit Utilization</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <div class="progress flex-grow-1 me-3" style="height: 30px;">
+                        <div class="progress-bar {% if float((credit_info.credit_utilization_pct) or 0) >= 90 %}bg-danger{% elif float((credit_info.credit_utilization_pct) or 0) >= 70 %}bg-warning{% else %}bg-success{% endif %}" 
+                             role="progressbar" style="width: {{ (credit_info.credit_utilization_pct) or 0 }}%">
+                            {{ "%.1f" % ((credit_info.credit_utilization_pct) or 0) }}%
+                        </div>
+                    </div>
+                    <span class="fw-bold">{{ "%.1f" % ((credit_info.credit_utilization_pct) or 0) }}%</span>
+                </div>
+                
+                {% if credit_info.is_credit_hold %}
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>Credit on Hold:</strong> {{ credit_info.hold_reason or 'No reason specified' }}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-gear"></i> Credit Settings</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Payment Terms:</strong> {{ credit_info.payment_terms or 'Not set' }}</p>
+                <p><strong>Credit Period:</strong> {{ credit_info.credit_period_days or 30 }} days</p>
+                <p><strong>DSO Days:</strong> {{ credit_info.dso_days or 0 }} days</p>
+                <hr>
+                <button type="button" class="btn btn-primary w-100" data-bs-toggle="modal" data-bs-target="#creditModal">
+                    <i class="bi bi-pencil"></i> Update Credit Info
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Aging Summary -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card bg-info text-white">
+            <div class="card-body text-center">
+                <h4 class="mb-0">₹{{ "{:,.0f}".format(aging_30) }}</h4>
+                <small class="text-white-50">Current (0-30 days)</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning text-dark">
+            <div class="card-body text-center">
+                <h4 class="mb-0">₹{{ "{:,.0f}".format(aging_60) }}</h4>
+                <small class="text-muted">31-60 days</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-danger text-white">
+            <div class="card-body text-center">
+                <h4 class="mb-0">₹{{ "{:,.0f}".format(aging_90) }}</h4>
+                <small class="text-white-50">61-90 days</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark text-white">
+            <div class="card-body text-center">
+                <h4 class="mb-0">₹{{ "{:,.0f}".format(aging_90_plus) }}</h4>
+                <small class="text-white-50">90+ days</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Transactions -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-clock-history"></i> Recent Transactions</h5>
+        <a href="{{ url_for('customer_aging_report') }}" class="btn btn-sm btn-outline-info">
+            <i class="bi bi-file-earmark-text"></i> Full Aging Report
+        </a>
+    </div>
+    <div class="card-body p-0">
+        {% if transactions %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Date</th>
+                        <th>Type</th>
+                        <th>Description</th>
+                        <th>Amount</th>
+                        <th>Balance After</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for transaction in transactions %}
+                    <tr>
+                        <td>{{ transaction.transaction_date.strftime('%d %b %Y') if transaction.transaction_date else '-' }}</td>
+                        <td>
+                            <span class="badge bg-{% if transaction.transaction_type == 'invoice' %}primary{% elif transaction.transaction_type == 'payment' %}success{% else %}secondary{% endif %}">
+                                {{ transaction.transaction_type.title() }}
+                            </span>
+                        </td>
+                        <td>{{ transaction.notes or '-' }}</td>
+                        <td class="{% if transaction.transaction_type == 'invoice' %}text-danger{% else %}text-success{% endif %}">
+                            {% if transaction.transaction_type == 'invoice' %}-{% endif %}₹{{ "{:,.0f}".format(transaction.amount) }}
+                        </td>
+                        <td>₹{{ "{:,.0f}".format(transaction.balance_after) }}</td>
+                        <td>
+                            <span class="badge bg-{% if transaction.status == 'completed' %}success{% else %}warning{% endif %}">
+                                {{ transaction.status.title() }}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-clock-history fs-1 d-block mb-3"></i>
+            <p>No transactions found.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Credit Update Modal -->
+<div class="modal fade" id="creditModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Update Credit Information</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('update_customer_credit', id=customer.id) }}">
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Credit Limit</label>
+                            <input type="number" name="credit_limit" class="form-control" 
+                                   value="{{ (credit_info.credit_limit) or 0 }}" step="0.01" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Credit Period (days)</label>
+                            <input type="number" name="credit_period_days" class="form-control" 
+                                   value="{{ credit_info.credit_period_days or 30 }}" min="0" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Payment Terms</label>
+                            <select name="payment_terms" class="form-select">
+                                <option value="Net 15" {% if credit_info.payment_terms == 'Net 15' %}selected{% endif %}>Net 15</option>
+                                <option value="Net 30" {% if credit_info.payment_terms == 'Net 30' %}selected{% endif %}>Net 30</option>
+                                <option value="Net 45" {% if credit_info.payment_terms == 'Net 45' %}selected{% endif %}>Net 45</option>
+                                <option value="Net 60" {% if credit_info.payment_terms == 'Net 60' %}selected{% endif %}>Net 60</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Credit Status</label>
+                            <select name="credit_status" class="form-select">
+                                <option value="active" {% if credit_info.credit_status == 'active' %}selected{% endif %}>Active</option>
+                                <option value="hold" {% if credit_info.credit_status == 'hold' %}selected{% endif %}>Hold</option>
+                                <option value="suspended" {% if credit_info.credit_status == 'suspended' %}selected{% endif %}>Suspended</option>
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="credit_hold" 
+                                       {% if credit_info.is_credit_hold %}checked{% endif %}>
+                                <label class="form-check-label">Place Credit on Hold</label>
+                            </div>
+                        </div>
+                        <div class="col-12" id="holdReasonDiv" style="{% if not credit_info.is_credit_hold %}display:none{% endif %}">
+                            <label class="form-label">Hold Reason</label>
+                            <textarea name="hold_reason" class="form-control" rows="2">{{ credit_info.hold_reason or '' }}</textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg"></i> Update
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+// Show/hide hold reason based on credit hold checkbox
+document.querySelector('input[name="credit_hold"]').addEventListener('change', function() {
+    const holdReasonDiv = document.getElementById('holdReasonDiv');
+    if (this.checked) {
+        holdReasonDiv.style.display = 'block';
+    } else {
+        holdReasonDiv.style.display = 'none';
+    }
+});
+</script>
+{% endblock %}

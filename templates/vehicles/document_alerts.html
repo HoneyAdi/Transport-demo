@@ -1,0 +1,152 @@
+{% extends 'base.html' %}
+
+{% block title %}Document Expiry Alerts{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="navbar-top d-flex justify-content-between align-items-center">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-exclamation-triangle"></i> Document Expiry Alerts
+        </h4>
+    </div>
+    <div>
+        <a href="{{ url_for('vehicles') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Vehicles
+        </a>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card bg-danger text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ total_expired }}</h3>
+                <small>Expired Documents</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning text-dark">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ total_critical }}</h3>
+                <small>Critical (≤7 days)</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-info text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ total_warning }}</h3>
+                <small>Warning (≤30 days)</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ vehicles_count }}</h3>
+                <small>Vehicles with Alerts</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card mb-3">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-funnel"></i> Filter Alerts</h5>
+    </div>
+    <div class="card-body">
+        <form method="GET" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">Days to Expiry</label>
+                <select name="days" class="form-select">
+                    <option value="7" {% if days_filter == '7' %}selected{% endif %}>Next 7 days</option>
+                    <option value="15" {% if days_filter == '15' %}selected{% endif %}>Next 15 days</option>
+                    <option value="30" {% if days_filter == '30' %}selected{% endif %}>Next 30 days</option>
+                    <option value="90" {% if days_filter == '90' %}selected{% endif %}>Next 90 days</option>
+                    <option value="" {% if not days_filter %}selected{% endif %}>All alerts</option>
+                </select>
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-search"></i> Apply Filter
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Alerts Table -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-list"></i> Documents Requiring Attention</h5>
+    </div>
+    <div class="card-body p-0">
+        {% if alert_data %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Vehicle</th>
+                        <th>Document</th>
+                        <th>Status</th>
+                        <th>Expiry Date</th>
+                        <th>Days Remaining</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for data in alert_data %}
+                        {% for alert in data.alerts %}
+                        <tr class="{% if alert.status == 'expired' %}table-danger{% elif alert.status == 'critical' %}table-warning{% endif %}">
+                            <td>
+                                <a href="{{ url_for('vehicle_dashboard', id=data.vehicle.id) }}" class="fw-bold">
+                                    {{ data.vehicle.registration_number }}
+                                </a>
+                                <br>
+                                <small class="text-muted">{{ data.vehicle.model or '' }}</small>
+                            </td>
+                            <td>{{ alert.document }}</td>
+                            <td>
+                                <span class="badge bg-{% if alert.status == 'expired' %}danger{% elif alert.status == 'critical' %}warning{% elif alert.status == 'warning' %}orange{% else %}info{% endif %}">
+                                    {{ alert.status.upper() }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if alert.expiry_date %}
+                                    {{ alert.expiry_date.strftime('%d %b %Y') }}
+                                {% else %}
+                                    <span class="text-muted">Not set</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if alert.days < 0 %}
+                                    <span class="text-danger fw-bold">Expired {{ alert.days|abs }} days ago</span>
+                                {% else %}
+                                    <span class="{% if alert.days <= 7 %}text-warning fw-bold{% endif %}">{{ alert.days }} days</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{{ url_for('vehicle_dashboard', id=data.vehicle.id) }}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-eye"></i> View
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-check-circle fs-1 d-block mb-3 text-success"></i>
+            <p>No document expiry alerts found.</p>
+            <p>All vehicle documents are up to date!</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

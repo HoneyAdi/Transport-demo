@@ -1,0 +1,281 @@
+{% extends 'customer_portal/base.html' %}
+
+{% block title %}Customer Dashboard{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h4 class="mb-0">
+            <i class="bi bi-speedometer2"></i> Welcome, {{ account.full_name }}
+        </h4>
+        <p class="text-muted mb-0">Manage your shipments and account information</p>
+    </div>
+    <div>
+        <!-- Notifications -->
+        <div class="dropdown">
+            <button class="btn btn-outline-primary position-relative" type="button" data-bs-toggle="dropdown">
+                <i class="bi bi-bell"></i>
+                {% if unread_count > 0 %}
+                <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">
+                    {{ unread_count }}
+                </span>
+                {% endif %}
+            </button>
+            <ul class="dropdown-menu">
+                <li><a class="dropdown-item" href="{{ url_for('customer_notifications') }}">
+                    <i class="bi bi-envelope"></i> View All Notifications
+                </a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item" href="{{ url_for('customer_profile') }}">
+                    <i class="bi bi-person"></i> Profile Settings
+                </a></li>
+                <li><a class="dropdown-item" href="{{ url_for('customer_logout') }}">
+                    <i class="bi bi-box-arrow-right"></i> Logout
+                </a></li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Stats -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ recent_bills|length }}</h3>
+                <small class="text-white-50">Active Shipments</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ recent_bills|selectattr('status', 'equalto', 'delivered')|length or 0 }}</h3>
+                <small class="text-white-50">Delivered</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning text-dark">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ recent_bills|selectattr('status', 'equalto', 'in_transit')|length or 0 }}</h3>
+                <small class="text-white-50">In Transit</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-info text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0">₹{{ "{:,.0f}".format(recent_bills|sum(attribute='rate') or 0) }}</h3>
+                <small class="text-white-50">Total Value</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Notifications -->
+{% if notifications %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-bell"></i> Recent Notifications</h5>
+                <a href="{{ url_for('customer_notifications') }}" class="btn btn-sm btn-outline-primary">View All</a>
+            </div>
+            <div class="card-body p-0">
+                {% for notification in notifications %}
+                <div class="alert alert-{% if notification.notification_type == 'payment_reminder' %}warning{% elif notification.notification_type == 'delivery_update' %}info{% else %}primary{% endif } alert-dismissible fade show" role="alert">
+                    <div class="d-flex align-items-start">
+                        <i class="bi bi-{% if notification.notification_type == 'payment_reminder' %}exclamation-triangle{% elif notification.notification_type == 'delivery_update' %}truck{% else %}info-circle{% endif } me-2"></i>
+                        <div class="flex-grow-1">
+                            <strong>{{ notification.title }}</strong>
+                            <p class="mb-0">{{ notification.message }}</p>
+                            <small class="text-muted">{{ notification.created_at.strftime('%d %b %Y, %I:%M %p') }}</small>
+                        </div>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Recent Shipments -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-truck"></i> Recent Shipments</h5>
+        <a href="{{ url_for('customer_orders') }}" class="btn btn-sm btn-outline-primary">View All</a>
+    </div>
+    <div class="card-body p-0">
+        {% if recent_bills %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th>GR Number</th>
+                        <th>Date</th>
+                        <th>From</th>
+                        <th>To</th>
+                        <th>Status</th>
+                        <th>Amount</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for bill in recent_bills %}
+                    <tr>
+                        <td><strong>{{ bill.gr_number or bill.id }}</strong></td>
+                        <td>{{ bill.date.strftime('%d %b %Y') if bill.date else '-' }}</td>
+                        <td>{{ bill.location.name if bill.location else '-' }}</td>
+                        <td>{{ bill.party_information or '-' }}</td>
+                        <td>
+                            <span class="badge bg-{% if bill.status == 'delivered' %}success{% elif bill.status == 'in_transit' %}warning{% elif bill.status == 'booked' %}info{% else %}secondary{% endif %}">
+                                {{ bill.status.replace('_', ' ').title() }}
+                            </span>
+                        </td>
+                        <td>₹{{ "{:,.0f}".format(bill.rate or 0) }}</td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-sm btn-outline-info" onclick="viewDetails({{ bill.id }})">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                                {% if bill.status == 'delivered' %}
+                                <button class="btn btn-sm btn-outline-success" onclick="downloadInvoice({{ bill.id }})">
+                                    <i class="bi bi-download"></i>
+                                </button>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-truck fs-1 d-block mb-3"></i>
+            <p>No shipments found.</p>
+            <p>Your recent shipments will appear here once they're created.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="row mt-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-lightning"></i> Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <a href="{{ url_for('customer_orders') }}" class="btn btn-outline-primary w-100">
+                            <i class="bi bi-truck"></i> Track Shipments
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{{ url_for('customer_documents') }}" class="btn btn-outline-success w-100">
+                            <i class="bi bi-file-earmark"></i> Manage Documents
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{{ url_for('customer_profile') }}" class="btn btn-outline-info w-100">
+                            <i class="bi bi-person"></i> Update Profile
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <button class="btn btn-outline-warning w-100" onclick="requestNewShipment()">
+                            <i class="bi bi-plus-circle"></i> Request Shipment
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Shipment Details Modal -->
+<div class="modal fade" id="shipmentModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Shipment Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="shipmentDetails">
+                    <!-- Details will be loaded here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function viewDetails(billId) {
+    // Load shipment details via AJAX
+    fetch(`/customer-portal/shipment-details/${billId}`)
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('shipmentDetails').innerHTML = `
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Shipment Information</h6>
+                        <p><strong>GR Number:</strong> ${data.gr_number || data.id}</p>
+                        <p><strong>Date:</strong> ${data.date || '-'}</p>
+                        <p><strong>Status:</strong> ${data.status || '-'}</p>
+                        <p><strong>Rate:</strong> ₹${data.rate || 0}</p>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Delivery Information</h6>
+                        <p><strong>From:</strong> ${data.location || '-'}</p>
+                        <p><strong>To:</strong> ${data.party_information || '-'}</p>
+                        <p><strong>Delivery Type:</strong> ${data.delivery_type || '-'}</p>
+                    </div>
+                </div>
+            `;
+            
+            const modal = new bootstrap.Modal(document.getElementById('shipmentModal'));
+            modal.show();
+        })
+        .catch(error => {
+            console.error('Error loading shipment details:', error);
+        });
+}
+
+function downloadInvoice(billId) {
+    // Download invoice
+    window.location.href = `/customer-portal/download-invoice/${billId}`;
+}
+
+function requestNewShipment() {
+    // Open new shipment request form
+    window.location.href = '/customer-portal/request-shipment';
+}
+
+// Auto-refresh notifications every 30 seconds
+setInterval(() => {
+    fetch('/customer-portal/unread-count')
+        .then(response => response.json())
+        .then(data => {
+            // Update notification badge
+            const badge = document.querySelector('.badge');
+            if (badge) {
+                badge.textContent = data.count || 0;
+                badge.style.display = data.count > 0 ? 'block' : 'none';
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching unread count:', error);
+        });
+}, 30000);
+</script>
+{% endblock %}
