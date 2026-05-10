@@ -6,4 +6,4 @@ services:
     startCommand: "bash start.sh"
     envVars:
       - key: PYTHON_VERSION
-        value: "3.14.3"
+        value: "3.11.9"
